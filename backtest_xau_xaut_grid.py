@@ -217,6 +217,7 @@ def run_backtest(
                         if pos["side"] == "LONG":
                             cash += pos["leg1_qty"] * leg1_close_exec
                             cash -= pos["leg2_qty"] * leg2_close_exec
+                            cash -= exit_fee
                             leg1_qty -= pos["leg1_qty"]
                             leg2_qty += pos["leg2_qty"]
                             pnl = (
@@ -229,6 +230,7 @@ def run_backtest(
                         else:
                             cash -= pos["leg1_qty"] * leg1_close_exec
                             cash += pos["leg2_qty"] * leg2_close_exec
+                            cash -= exit_fee
                             leg1_qty += pos["leg1_qty"]
                             leg2_qty -= pos["leg2_qty"]
                             pnl = (
@@ -238,7 +240,6 @@ def run_backtest(
                             )
                             leg1_close_direction = "BUY"
                             leg2_close_direction = "SELL"
-                        cash -= exit_fee
                         closed_arbs.append(
                             {
                                 "open_datetime": pos["open_datetime"],
@@ -342,6 +343,19 @@ def run_backtest(
                             "entry_fee": entry_fee,
                         }
                         trade_count += 1
+                    prev_spread = spread
+                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
+                    records.append(
+                        {
+                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
+                            "open_time": int(open_times[i]),
+                            "spread": float(spread),
+                            "leg1_qty": float(leg1_qty),
+                            "leg2_qty": float(leg2_qty),
+                            "equity": float(equity),
+                        }
+                    )
+                    continue
                 else:
                     prev_spread = spread
                     equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
