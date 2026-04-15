@@ -163,7 +163,7 @@ def _run_one(args_tuple: Tuple) -> Optional[Dict[str, Any]]:
         taker_slippage_pt=slippage,
     )
     assert _spreads is not None and _leg1 is not None and _leg2 is not None and _dts is not None
-    result, metrics, _, total_pnl, max_drawdown = run_backtest(
+    result, metrics, _, total_pnl, max_drawdown, _ = run_backtest(
         None,
         cfg,
         spreads=_spreads,

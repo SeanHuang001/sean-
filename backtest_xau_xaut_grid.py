@@ -1,8 +1,9 @@
 import argparse
+import html
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -111,7 +112,7 @@ def run_backtest(
     leg1_closes: np.ndarray | None = None,
     leg2_closes: np.ndarray | None = None,
     datetimes: list | None = None,
-) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame, float, float]:
+) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame, float, float, List[Dict[str, Any]]]:
     cash = cfg.initial_capital
     leg1_qty = 0.0
     leg2_qty = 0.0
@@ -160,6 +161,10 @@ def run_backtest(
     prev_spread = float(spreads[start_idx])
     cb_tripped = False
     cb_trip_count = 0
+    cb_events: List[Dict[str, Any]] = []
+    total_open_deviation = 0.0
+    total_open_deviation_abs = 0.0
+    open_count = 0
 
     use_int64_datetimes = df is None
     for i in range(start_idx, len(spreads)):
@@ -203,6 +208,8 @@ def run_backtest(
                 if spread >= cb_upper_trip or spread <= cb_lower_trip:
                     cb_tripped = True
                     cb_trip_count += 1
+                    positions_count_trip = len(positions)
+                    forced_pnl_sum = 0.0
                     for g in list(positions.keys()):
                         pos = positions[g]
                         tp_spread = spread
@@ -240,6 +247,7 @@ def run_backtest(
                             )
                             leg1_close_direction = "BUY"
                             leg2_close_direction = "SELL"
+                        forced_pnl_sum += float(pnl)
                         closed_arbs.append(
                             {
                                 "open_datetime": pos["open_datetime"],
@@ -264,6 +272,17 @@ def run_backtest(
                             }
                         )
                         trade_count += 1
+                    cb_events.append(
+                        {
+                            "event": "TRIP",
+                            "datetime": dt,
+                            "spread": spread,
+                            "positions_count": positions_count_trip,
+                            "forced_pnl": forced_pnl_sum,
+                            "cb_upper_trip": cb_upper_trip,
+                            "cb_lower_trip": cb_lower_trip,
+                        }
+                    )
                     positions.clear()
                     locked_long_levels.clear()
                     locked_short_levels.clear()
@@ -342,7 +361,22 @@ def run_backtest(
                             "leg2_qty": cfg.qty,
                             "entry_fee": entry_fee,
                         }
+                        execution_spread = leg1_open_exec - leg2_open_exec
+                        deviation = execution_spread - float(g_rb)
+                        total_open_deviation += deviation
+                        total_open_deviation_abs += abs(deviation)
+                        open_count += 1
                         trade_count += 1
+                    cb_events.append(
+                        {
+                            "event": "REENTRY",
+                            "datetime": dt,
+                            "spread": spread,
+                            "rebuilt_count": len(grids_to_rebuild),
+                            "cb_upper_reentry": cb_upper_reentry,
+                            "cb_lower_reentry": cb_lower_reentry,
+                        }
+                    )
                     prev_spread = spread
                     equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
                     records.append(
@@ -531,6 +565,11 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
+                    execution_spread = leg1_open_exec - leg2_open_exec
+                    deviation = execution_spread - float(g)
+                    total_open_deviation += deviation
+                    total_open_deviation_abs += abs(deviation)
+                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -574,6 +613,11 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
+                    execution_spread = leg1_open_exec - leg2_open_exec
+                    deviation = execution_spread - float(g)
+                    total_open_deviation += deviation
+                    total_open_deviation_abs += abs(deviation)
+                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -629,8 +673,11 @@ def run_backtest(
             "backtest_start_datetime": "",
             "backtest_start_spread": float(spreads[start_idx]) if len(spreads) else 0.0,
             "cb_trip_count": int(cb_trip_count),
+            "avg_open_deviation": 0.0,
+            "avg_open_deviation_abs": 0.0,
+            "total_open_deviation_abs": 0.0,
         }
-        return result, metrics, closed_df, 0.0, 0.0
+        return result, metrics, closed_df, 0.0, 0.0, cb_events
 
     equity_ret = result["equity"].pct_change().fillna(0.0)
     cummax_equity = result["equity"].cummax()
@@ -667,6 +714,8 @@ def run_backtest(
         total_realized_pnl = 0.0
 
     total_pnl = float(result["equity"].iloc[-1] - cfg.initial_capital)
+    avg_open_deviation = total_open_deviation / open_count if open_count else 0.0
+    avg_open_deviation_abs = total_open_deviation_abs / open_count if open_count else 0.0
     metrics = {
         "initial_capital": cfg.initial_capital,
         "final_equity": float(result["equity"].iloc[-1]),
@@ -692,8 +741,11 @@ def run_backtest(
         "backtest_start_datetime": str(actual_start),
         "backtest_start_spread": float(spreads[start_idx]),
         "cb_trip_count": int(cb_trip_count),
+        "avg_open_deviation": float(avg_open_deviation),
+        "avg_open_deviation_abs": float(avg_open_deviation_abs),
+        "total_open_deviation_abs": float(total_open_deviation_abs),
     }
-    return result, metrics, closed_df, total_pnl, float(max_drawdown)
+    return result, metrics, closed_df, total_pnl, float(max_drawdown), cb_events
 
 
 def save_equity_drawdown_plots(result: pd.DataFrame, report_dir: str) -> Tuple[str, str]:
@@ -722,6 +774,70 @@ def save_equity_drawdown_plots(result: pd.DataFrame, report_dir: str) -> Tuple[s
     return equity_png, dd_png
 
 
+def _render_cb_section(cb_trip: float, cb_events: List[Dict[str, Any]]) -> str:
+    if cb_trip == 0 or not cb_events:
+        return (
+            '<div class="section">'
+            '<h2>熔断明细</h2>'
+            '<p class="muted">未启用熔断机制</p>'
+            "</div>"
+        )
+    trip_events = [e for e in cb_events if e.get("event") == "TRIP"]
+    n_trip = len(trip_events)
+    total_forced = sum(float(e.get("forced_pnl", 0.0)) for e in trip_events)
+
+    rows: List[str] = []
+    for e in cb_events:
+        dt_s = html.escape(str(e.get("datetime", "")))
+        sp = float(e.get("spread", 0.0))
+        ev = e.get("event", "")
+        if ev == "TRIP":
+            evt_cell = '<span class="cb-trip">熔断触发</span>'
+            u_t = float(e.get("cb_upper_trip", 0.0))
+            lo_t = float(e.get("cb_lower_trip", 0.0))
+            line_cell = f"+{u_t:.4f} / {lo_t:.4f}"
+            ncell = str(int(e.get("positions_count", 0)))
+            fp = float(e.get("forced_pnl", 0.0))
+            pnl_cls = "pnl-pos" if fp >= 0 else "pnl-neg"
+            pnl_cell = f'<span class="{pnl_cls}">{fp:,.2f}</span>'
+        else:
+            evt_cell = '<span class="cb-reentry">重进建仓</span>'
+            u_r = float(e.get("cb_upper_reentry", 0.0))
+            lo_r = float(e.get("cb_lower_reentry", 0.0))
+            line_cell = f"+{u_r:.4f} / {lo_r:.4f}"
+            ncell = str(int(e.get("rebuilt_count", 0)))
+            pnl_cell = "-"
+        rows.append(
+            f"<tr><td>{dt_s}</td><td>{evt_cell}</td><td>{sp:.4f}</td>"
+            f"<td>{html.escape(line_cell)}</td><td>{ncell}</td><td>{pnl_cell}</td></tr>"
+        )
+    rows_html = "\n".join(rows)
+    summary = f"共触发熔断 {n_trip} 次，强平累计盈亏 {total_forced:,.2f} USDT。"
+    return f"""
+    <div class="section">
+      <h2>熔断明细</h2>
+      <div class="table-scroll">
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>事件类型</th>
+              <th>触发价差</th>
+              <th>熔断线 / 重进线</th>
+              <th>处理格数</th>
+              <th>本次强平盈亏</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows_html}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:12px">{html.escape(summary)}</p>
+    </div>
+    """
+
+
 def build_html_report(
     metrics: Dict[str, float],
     pair_name: str,
@@ -732,6 +848,8 @@ def build_html_report(
     leg1_name: str = "leg1",
     leg2_name: str = "leg2",
     fee_note: str = "",
+    cb_trip: float = 0.0,
+    cb_events: List[Dict[str, Any]] | None = None,
 ) -> None:
     metric_name_map = {
         "initial_capital": "初始资金",
@@ -757,6 +875,9 @@ def build_html_report(
         "backtest_start_datetime": "回测起始时间",
         "backtest_start_spread": "回测起始价差",
         "cb_trip_count": "熔断触发次数",
+        "avg_open_deviation": "每笔开仓平均价差偏差（有方向）",
+        "avg_open_deviation_abs": "每笔开仓平均价差偏差（绝对值）",
+        "total_open_deviation_abs": "累计开仓价差偏差（绝对值）",
     }
 
     metric_rows = []
@@ -848,6 +969,9 @@ def build_html_report(
         for c in ["手续费", "盈利"]:
             show_df[c] = show_df[c].map(lambda x: f"{x:,.4f}")
         detail_table = show_df.to_html(index=False, classes="detail-table", border=0, escape=False)
+
+    cb_ev = cb_events if cb_events is not None else []
+    cb_section = _render_cb_section(float(cb_trip), cb_ev)
 
     note_line = fee_note or "手续费与滑点以 GridConfig 为准；成交明细按一次完整套利（开仓+平仓）统计。"
     html = f"""
@@ -948,6 +1072,10 @@ def build_html_report(
       overflow: auto;
       border-radius: 10px;
     }}
+    .cb-trip {{ color: #dc2626; font-weight: 600; }}
+    .cb-reentry {{ color: #16a34a; font-weight: 600; }}
+    .pnl-pos {{ color: #16a34a; font-weight: 600; }}
+    .pnl-neg {{ color: #dc2626; font-weight: 600; }}
   </style>
 </head>
 <body>
@@ -987,6 +1115,7 @@ def build_html_report(
         {detail_table}
       </div>
     </div>
+    {cb_section}
   </div>
 </body>
 </html>
@@ -1075,7 +1204,7 @@ def main() -> None:
     run_report_dir = os.path.join(args.report_dir, f"{run_id}_{pair_display.replace('/', '-')}")
     os.makedirs(run_report_dir, exist_ok=True)
 
-    result, metrics, closed_df, _, _ = run_backtest(df, cfg)
+    result, metrics, closed_df, _, _, cb_events = run_backtest(df, cfg)
 
     curve_csv = os.path.join(run_report_dir, "equity_curve.csv")
     detail_csv = os.path.join(run_report_dir, "trade_details.csv")
@@ -1098,6 +1227,8 @@ def main() -> None:
         leg1_name=leg1_label,
         leg2_name=leg2_label,
         fee_note=fee_note,
+        cb_trip=cfg.cb_trip,
+        cb_events=cb_events,
     )
 
     print("=== Backtest Metrics ===")
