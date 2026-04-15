@@ -162,9 +162,6 @@ def run_backtest(
     cb_tripped = False
     cb_trip_count = 0
     cb_events: List[Dict[str, Any]] = []
-    total_open_deviation = 0.0
-    total_open_deviation_abs = 0.0
-    open_count = 0
 
     use_int64_datetimes = df is None
     for i in range(start_idx, len(spreads)):
@@ -361,11 +358,6 @@ def run_backtest(
                             "leg2_qty": cfg.qty,
                             "entry_fee": entry_fee,
                         }
-                        execution_spread = leg1_open_exec - leg2_open_exec
-                        deviation = execution_spread - float(g_rb)
-                        total_open_deviation += deviation
-                        total_open_deviation_abs += abs(deviation)
-                        open_count += 1
                         trade_count += 1
                     cb_events.append(
                         {
@@ -565,11 +557,6 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
-                    execution_spread = leg1_open_exec - leg2_open_exec
-                    deviation = execution_spread - float(g)
-                    total_open_deviation += deviation
-                    total_open_deviation_abs += abs(deviation)
-                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -613,11 +600,6 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
-                    execution_spread = leg1_open_exec - leg2_open_exec
-                    deviation = execution_spread - float(g)
-                    total_open_deviation += deviation
-                    total_open_deviation_abs += abs(deviation)
-                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -673,9 +655,6 @@ def run_backtest(
             "backtest_start_datetime": "",
             "backtest_start_spread": float(spreads[start_idx]) if len(spreads) else 0.0,
             "cb_trip_count": int(cb_trip_count),
-            "avg_open_deviation": 0.0,
-            "avg_open_deviation_abs": 0.0,
-            "total_open_deviation_abs": 0.0,
         }
         return result, metrics, closed_df, 0.0, 0.0, cb_events
 
@@ -714,8 +693,6 @@ def run_backtest(
         total_realized_pnl = 0.0
 
     total_pnl = float(result["equity"].iloc[-1] - cfg.initial_capital)
-    avg_open_deviation = total_open_deviation / open_count if open_count else 0.0
-    avg_open_deviation_abs = total_open_deviation_abs / open_count if open_count else 0.0
     metrics = {
         "initial_capital": cfg.initial_capital,
         "final_equity": float(result["equity"].iloc[-1]),
@@ -741,9 +718,6 @@ def run_backtest(
         "backtest_start_datetime": str(actual_start),
         "backtest_start_spread": float(spreads[start_idx]),
         "cb_trip_count": int(cb_trip_count),
-        "avg_open_deviation": float(avg_open_deviation),
-        "avg_open_deviation_abs": float(avg_open_deviation_abs),
-        "total_open_deviation_abs": float(total_open_deviation_abs),
     }
     return result, metrics, closed_df, total_pnl, float(max_drawdown), cb_events
 
@@ -875,9 +849,6 @@ def build_html_report(
         "backtest_start_datetime": "回测起始时间",
         "backtest_start_spread": "回测起始价差",
         "cb_trip_count": "熔断触发次数",
-        "avg_open_deviation": "每笔开仓平均价差偏差（有方向）",
-        "avg_open_deviation_abs": "每笔开仓平均价差偏差（绝对值）",
-        "total_open_deviation_abs": "累计开仓价差偏差（绝对值）",
     }
 
     metric_rows = []
