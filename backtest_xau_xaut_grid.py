@@ -19,6 +19,8 @@ class GridConfig:
     maker_fee: float = 0.000042
     taker_fee: float = 0.000042
     taker_slippage_pt: float = 0.2
+    cb_trip: float = 0.0  # 熔断值，0 表示不启用。熔断线 = center ± cb_trip
+    cb_reentry: float = 0.0  # 重进值，须 < cb_trip。重进线 = center ± cb_reentry
 
     @property
     def max_grid_units(self) -> int:
@@ -156,6 +158,8 @@ def run_backtest(
         start_idx = int(np.argmin(np.abs(spreads - float(cfg.grid_center))))
 
     prev_spread = float(spreads[start_idx])
+    cb_tripped = False
+    cb_trip_count = 0
 
     use_int64_datetimes = df is None
     for i in range(start_idx, len(spreads)):
@@ -186,6 +190,172 @@ def run_backtest(
                 del locked_tp_both[k]
             elif v < 0 and spread >= -v:
                 del locked_tp_both[k]
+
+        # --- 熔断机制 ---
+        use_cb = cfg.cb_trip > 0 and cfg.cb_reentry > 0 and cfg.cb_reentry < cfg.cb_trip
+        if use_cb:
+            cb_upper_trip = cfg.grid_center + cfg.cb_trip
+            cb_lower_trip = cfg.grid_center - cfg.cb_trip
+            cb_upper_reentry = cfg.grid_center + cfg.cb_reentry
+            cb_lower_reentry = cfg.grid_center - cfg.cb_reentry
+
+            if not cb_tripped:
+                if spread >= cb_upper_trip or spread <= cb_lower_trip:
+                    cb_tripped = True
+                    cb_trip_count += 1
+                    for g in list(positions.keys()):
+                        pos = positions[g]
+                        tp_spread = spread
+                        actual_spread_move = tp_spread - pos["entry_spread"]
+                        leg1_close_exec = pos["leg1_open_price"] + actual_spread_move / 2.0
+                        leg2_close_exec = pos["leg2_open_price"] - actual_spread_move / 2.0
+                        maker_fee = pos["leg1_qty"] * leg1_close_exec * cfg.maker_fee
+                        taker_fee = pos["leg2_qty"] * leg2_close_exec * cfg.taker_fee
+                        exit_fee = maker_fee + taker_fee
+                        total_taker_fee += taker_fee
+                        total_maker_fee += maker_fee
+                        if pos["side"] == "LONG":
+                            cash += pos["leg1_qty"] * leg1_close_exec
+                            cash -= pos["leg2_qty"] * leg2_close_exec
+                            leg1_qty -= pos["leg1_qty"]
+                            leg2_qty += pos["leg2_qty"]
+                            pnl = (
+                                (leg1_close_exec - pos["leg1_open_price"]) * pos["leg1_qty"]
+                                + (pos["leg2_open_price"] - leg2_close_exec) * pos["leg2_qty"]
+                                - (pos["entry_fee"] + exit_fee)
+                            )
+                            leg1_close_direction = "SELL"
+                            leg2_close_direction = "BUY"
+                        else:
+                            cash -= pos["leg1_qty"] * leg1_close_exec
+                            cash += pos["leg2_qty"] * leg2_close_exec
+                            leg1_qty += pos["leg1_qty"]
+                            leg2_qty -= pos["leg2_qty"]
+                            pnl = (
+                                (pos["leg1_open_price"] - leg1_close_exec) * pos["leg1_qty"]
+                                + (leg2_close_exec - pos["leg2_open_price"]) * pos["leg2_qty"]
+                                - (pos["entry_fee"] + exit_fee)
+                            )
+                            leg1_close_direction = "BUY"
+                            leg2_close_direction = "SELL"
+                        cash -= exit_fee
+                        closed_arbs.append(
+                            {
+                                "open_datetime": pos["open_datetime"],
+                                "close_datetime": dt,
+                                "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
+                                "grid_level": pos["grid_level"],
+                                "entry_spread": pos["entry_spread"],
+                                "take_profit_spread": pos["take_profit_spread"],
+                                "leg1_open_price": pos["leg1_open_price"],
+                                "leg1_open_direction": pos["leg1_open_direction"],
+                                "leg2_open_price": pos["leg2_open_price"],
+                                "leg2_open_direction": pos["leg2_open_direction"],
+                                "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
+                                "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
+                                "leg1_close_price": leg1_close_exec,
+                                "leg1_close_direction": leg1_close_direction,
+                                "leg2_close_price": leg2_close_exec,
+                                "leg2_close_direction": leg2_close_direction,
+                                "fee": pos["entry_fee"] + exit_fee,
+                                "pnl": pnl,
+                                "cb_forced": True,
+                            }
+                        )
+                        trade_count += 1
+                    positions.clear()
+                    locked_long_levels.clear()
+                    locked_short_levels.clear()
+                    locked_reopen_long_levels.clear()
+                    locked_reopen_short_levels.clear()
+                    locked_tp_both.clear()
+                    prev_spread = spread
+                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
+                    records.append(
+                        {
+                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
+                            "open_time": int(open_times[i]),
+                            "spread": float(spread),
+                            "leg1_qty": float(leg1_qty),
+                            "leg2_qty": float(leg2_qty),
+                            "equity": float(equity),
+                        }
+                    )
+                    continue
+
+            else:
+                if cb_lower_reentry <= spread <= cb_upper_reentry:
+                    cb_tripped = False
+                    grids_sorted = sorted(grids)
+                    cur = spread
+                    center = cfg.grid_center
+                    eps = 1e-9
+                    grids_to_rebuild: List[Tuple[float, str]] = []
+                    if cur < center - eps:
+                        cands = [g for g in grids_sorted if cur - eps <= g < center - eps]
+                        grids_to_rebuild = [(g, "LONG") for g in sorted(cands, reverse=True)]
+                    elif cur > center + eps:
+                        cands = [g for g in grids_sorted if center + eps < g <= cur + eps]
+                        grids_to_rebuild = [(g, "SHORT") for g in sorted(cands)]
+
+                    for g_rb, side_rb in grids_to_rebuild:
+                        gk_rb = round(float(g_rb), 8)
+                        if gk_rb in positions:
+                            continue
+                        tp_rb = g_rb + cfg.grid_step if side_rb == "LONG" else g_rb - cfg.grid_step
+                        leg1_open_exec = leg1_px
+                        if side_rb == "LONG":
+                            leg2_open_exec = leg2_px - cfg.taker_slippage_pt
+                        else:
+                            leg2_open_exec = leg2_px + cfg.taker_slippage_pt
+                        maker_fee_o = cfg.qty * leg1_open_exec * cfg.maker_fee
+                        taker_fee_o = cfg.qty * leg2_open_exec * cfg.taker_fee
+                        entry_fee = maker_fee_o + taker_fee_o
+                        total_taker_fee += taker_fee_o
+                        total_maker_fee += maker_fee_o
+                        if side_rb == "LONG":
+                            cash -= cfg.qty * leg1_open_exec
+                            cash += cfg.qty * leg2_open_exec
+                            leg1_qty += cfg.qty
+                            leg2_qty -= cfg.qty
+                            leg1_dir, leg2_dir = "BUY", "SELL"
+                        else:
+                            cash += cfg.qty * leg1_open_exec
+                            cash -= cfg.qty * leg2_open_exec
+                            leg1_qty -= cfg.qty
+                            leg2_qty += cfg.qty
+                            leg1_dir, leg2_dir = "SELL", "BUY"
+                        cash -= entry_fee
+                        positions[gk_rb] = {
+                            "grid_level": g_rb,
+                            "side": side_rb,
+                            "qty": cfg.qty,
+                            "entry_spread": g_rb,
+                            "take_profit_spread": tp_rb,
+                            "open_datetime": dt,
+                            "leg1_open_price": leg1_open_exec,
+                            "leg1_open_direction": leg1_dir,
+                            "leg2_open_price": leg2_open_exec,
+                            "leg2_open_direction": leg2_dir,
+                            "leg1_qty": cfg.qty,
+                            "leg2_qty": cfg.qty,
+                            "entry_fee": entry_fee,
+                        }
+                        trade_count += 1
+                else:
+                    prev_spread = spread
+                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
+                    records.append(
+                        {
+                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
+                            "open_time": int(open_times[i]),
+                            "spread": float(spread),
+                            "leg1_qty": float(leg1_qty),
+                            "leg2_qty": float(leg2_qty),
+                            "equity": float(equity),
+                        }
+                    )
+                    continue
 
         if i > start_idx:
             # 1) 先处理平仓：按每笔仓位各自止盈线精确匹配，不做批量平仓
@@ -444,6 +614,7 @@ def run_backtest(
             "backtest_start_idx": start_idx,
             "backtest_start_datetime": "",
             "backtest_start_spread": float(spreads[start_idx]) if len(spreads) else 0.0,
+            "cb_trip_count": int(cb_trip_count),
         }
         return result, metrics, closed_df, 0.0, 0.0
 
@@ -506,6 +677,7 @@ def run_backtest(
         "backtest_start_idx": int(start_idx),
         "backtest_start_datetime": str(actual_start),
         "backtest_start_spread": float(spreads[start_idx]),
+        "cb_trip_count": int(cb_trip_count),
     }
     return result, metrics, closed_df, total_pnl, float(max_drawdown)
 
@@ -570,6 +742,7 @@ def build_html_report(
         "backtest_start_idx": "回测起始索引",
         "backtest_start_datetime": "回测起始时间",
         "backtest_start_spread": "回测起始价差",
+        "cb_trip_count": "熔断触发次数",
     }
 
     metric_rows = []
@@ -847,6 +1020,18 @@ def main() -> None:
     parser.add_argument("--slippage", type=float, default=0.2)
     parser.add_argument("--capital", type=float, default=10000.0)
     parser.add_argument("--report_dir", default="report", help="Output report directory")
+    parser.add_argument(
+        "--cb_trip",
+        type=float,
+        default=0.0,
+        help="熔断值，0=不启用，熔断线=center±cb_trip",
+    )
+    parser.add_argument(
+        "--cb_reentry",
+        type=float,
+        default=0.0,
+        help="重进值，重进线=center±cb_reentry，需小于 cb_trip",
+    )
     args = parser.parse_args()
 
     args.leg1 = _resolve_input_csv(args.leg1)
@@ -867,6 +1052,8 @@ def main() -> None:
         maker_fee=args.maker_fee,
         taker_fee=args.taker_fee,
         taker_slippage_pt=args.slippage,
+        cb_trip=args.cb_trip,
+        cb_reentry=args.cb_reentry,
     )
 
     os.makedirs(args.report_dir, exist_ok=True)
