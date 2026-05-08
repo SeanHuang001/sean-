@@ -112,6 +112,7 @@ def run_backtest(
     leg1_closes: np.ndarray | None = None,
     leg2_closes: np.ndarray | None = None,
     datetimes: list | None = None,
+    lightweight: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame, float, float, List[Dict[str, Any]]]:
     cash = cfg.initial_capital
     leg1_qty = 0.0
@@ -162,6 +163,48 @@ def run_backtest(
     cb_tripped = False
     cb_trip_count = 0
     cb_events: List[Dict[str, Any]] = []
+    total_open_deviation = 0.0
+    total_open_deviation_abs = 0.0
+    open_count = 0
+
+    # lightweight 模式：用于网格搜索，避免为每次回测生成逐K权益曲线 DataFrame（节省大量内存）
+    prev_equity: float | None = None
+    peak_equity: float = cfg.initial_capital
+    max_drawdown_light: float = 0.0
+    # equity pct-change 在线统计（Welford），用于年化夏普
+    ret_n = 0
+    ret_mean = 0.0
+    ret_m2 = 0.0
+
+    def _snapshot_equity_bar() -> None:
+        """记录当根 K 线结束权益（与熔断分支共用）；lightweight 下同步回撤/夏普统计。"""
+        nonlocal prev_equity, peak_equity, max_drawdown_light, ret_n, ret_mean, ret_m2
+        eq = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
+        if lightweight:
+            if prev_equity is not None and prev_equity != 0:
+                r = float(eq / prev_equity - 1.0)
+                ret_n += 1
+                delta = r - ret_mean
+                ret_mean += delta / ret_n
+                ret_m2 += delta * (r - ret_mean)
+            prev_equity = float(eq)
+            if eq > peak_equity:
+                peak_equity = float(eq)
+            if peak_equity > 0:
+                dd = float(eq / peak_equity - 1.0)
+                if dd < max_drawdown_light:
+                    max_drawdown_light = dd
+        else:
+            records.append(
+                {
+                    "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
+                    "open_time": int(open_times[i]),
+                    "spread": float(spread),
+                    "leg1_qty": float(leg1_qty),
+                    "leg2_qty": float(leg2_qty),
+                    "equity": float(eq),
+                }
+            )
 
     use_int64_datetimes = df is None
     for i in range(start_idx, len(spreads)):
@@ -209,7 +252,8 @@ def run_backtest(
                     forced_pnl_sum = 0.0
                     for g in list(positions.keys()):
                         pos = positions[g]
-                        tp_spread = spread
+                        # 强平成交价差：落在熔断线上，不按当前 K 线收盘价价差
+                        tp_spread = cb_upper_trip if spread >= cb_upper_trip else cb_lower_trip
                         actual_spread_move = tp_spread - pos["entry_spread"]
                         leg1_close_exec = pos["leg1_open_price"] + actual_spread_move / 2.0
                         leg2_close_exec = pos["leg2_open_price"] - actual_spread_move / 2.0
@@ -245,29 +289,30 @@ def run_backtest(
                             leg1_close_direction = "BUY"
                             leg2_close_direction = "SELL"
                         forced_pnl_sum += float(pnl)
-                        closed_arbs.append(
-                            {
-                                "open_datetime": pos["open_datetime"],
-                                "close_datetime": dt,
-                                "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
-                                "grid_level": pos["grid_level"],
-                                "entry_spread": pos["entry_spread"],
-                                "take_profit_spread": pos["take_profit_spread"],
-                                "leg1_open_price": pos["leg1_open_price"],
-                                "leg1_open_direction": pos["leg1_open_direction"],
-                                "leg2_open_price": pos["leg2_open_price"],
-                                "leg2_open_direction": pos["leg2_open_direction"],
-                                "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
-                                "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
-                                "leg1_close_price": leg1_close_exec,
-                                "leg1_close_direction": leg1_close_direction,
-                                "leg2_close_price": leg2_close_exec,
-                                "leg2_close_direction": leg2_close_direction,
-                                "fee": pos["entry_fee"] + exit_fee,
-                                "pnl": pnl,
-                                "cb_forced": True,
-                            }
-                        )
+                        if not lightweight:
+                            closed_arbs.append(
+                                {
+                                    "open_datetime": pos["open_datetime"],
+                                    "close_datetime": dt,
+                                    "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
+                                    "grid_level": pos["grid_level"],
+                                    "entry_spread": pos["entry_spread"],
+                                    "take_profit_spread": pos["take_profit_spread"],
+                                    "leg1_open_price": pos["leg1_open_price"],
+                                    "leg1_open_direction": pos["leg1_open_direction"],
+                                    "leg2_open_price": pos["leg2_open_price"],
+                                    "leg2_open_direction": pos["leg2_open_direction"],
+                                    "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
+                                    "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
+                                    "leg1_close_price": leg1_close_exec,
+                                    "leg1_close_direction": leg1_close_direction,
+                                    "leg2_close_price": leg2_close_exec,
+                                    "leg2_close_direction": leg2_close_direction,
+                                    "fee": pos["entry_fee"] + exit_fee,
+                                    "pnl": pnl,
+                                    "cb_forced": True,
+                                }
+                            )
                         trade_count += 1
                     cb_events.append(
                         {
@@ -287,17 +332,7 @@ def run_backtest(
                     locked_reopen_short_levels.clear()
                     locked_tp_both.clear()
                     prev_spread = spread
-                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
-                    records.append(
-                        {
-                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
-                            "open_time": int(open_times[i]),
-                            "spread": float(spread),
-                            "leg1_qty": float(leg1_qty),
-                            "leg2_qty": float(leg2_qty),
-                            "equity": float(equity),
-                        }
-                    )
+                    _snapshot_equity_bar()
                     continue
 
             else:
@@ -320,11 +355,16 @@ def run_backtest(
                         if gk_rb in positions:
                             continue
                         tp_rb = g_rb + cfg.grid_step if side_rb == "LONG" else g_rb - cfg.grid_step
-                        leg1_open_exec = leg1_px
+                        # 重进成交价：按网格价 g_rb 对齐两腿（对半分摊价差偏离），再吃 leg2 滑点
+                        half_adj = (float(g_rb) - spread) / 2.0
+                        adj_leg1 = leg1_px + half_adj
+                        adj_leg2_mid = leg2_px - half_adj
                         if side_rb == "LONG":
-                            leg2_open_exec = leg2_px - cfg.taker_slippage_pt
+                            leg1_open_exec = adj_leg1
+                            leg2_open_exec = adj_leg2_mid - cfg.taker_slippage_pt
                         else:
-                            leg2_open_exec = leg2_px + cfg.taker_slippage_pt
+                            leg1_open_exec = adj_leg1
+                            leg2_open_exec = adj_leg2_mid + cfg.taker_slippage_pt
                         maker_fee_o = cfg.qty * leg1_open_exec * cfg.maker_fee
                         taker_fee_o = cfg.qty * leg2_open_exec * cfg.taker_fee
                         entry_fee = maker_fee_o + taker_fee_o
@@ -358,6 +398,11 @@ def run_backtest(
                             "leg2_qty": cfg.qty,
                             "entry_fee": entry_fee,
                         }
+                        execution_spread = leg1_open_exec - leg2_open_exec
+                        deviation = execution_spread - float(g_rb)
+                        total_open_deviation += deviation
+                        total_open_deviation_abs += abs(deviation)
+                        open_count += 1
                         trade_count += 1
                     cb_events.append(
                         {
@@ -370,31 +415,11 @@ def run_backtest(
                         }
                     )
                     prev_spread = spread
-                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
-                    records.append(
-                        {
-                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
-                            "open_time": int(open_times[i]),
-                            "spread": float(spread),
-                            "leg1_qty": float(leg1_qty),
-                            "leg2_qty": float(leg2_qty),
-                            "equity": float(equity),
-                        }
-                    )
+                    _snapshot_equity_bar()
                     continue
                 else:
                     prev_spread = spread
-                    equity = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
-                    records.append(
-                        {
-                            "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
-                            "open_time": int(open_times[i]),
-                            "spread": float(spread),
-                            "leg1_qty": float(leg1_qty),
-                            "leg2_qty": float(leg2_qty),
-                            "equity": float(equity),
-                        }
-                    )
+                    _snapshot_equity_bar()
                     continue
 
         if i > start_idx:
@@ -477,28 +502,29 @@ def run_backtest(
 
                 assert g not in closed_this_bar, f"Duplicate close detected for grid level {g}"
                 closed_this_bar.add(g)
-                closed_arbs.append(
-                    {
-                        "open_datetime": pos["open_datetime"],
-                        "close_datetime": dt,
-                        "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
-                        "grid_level": pos["grid_level"],
-                        "entry_spread": pos["entry_spread"],
-                        "take_profit_spread": pos["take_profit_spread"],
-                        "leg1_open_price": pos["leg1_open_price"],
-                        "leg1_open_direction": pos["leg1_open_direction"],
-                        "leg2_open_price": pos["leg2_open_price"],
-                        "leg2_open_direction": pos["leg2_open_direction"],
-                        "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
-                        "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
-                        "leg1_close_price": leg1_close_exec,
-                        "leg1_close_direction": leg1_close_direction,
-                        "leg2_close_price": leg2_close_exec,
-                        "leg2_close_direction": leg2_close_direction,
-                        "fee": pos["entry_fee"] + exit_fee,
-                        "pnl": pnl,
-                    }
-                )
+                if not lightweight:
+                    closed_arbs.append(
+                        {
+                            "open_datetime": pos["open_datetime"],
+                            "close_datetime": dt,
+                            "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
+                            "grid_level": pos["grid_level"],
+                            "entry_spread": pos["entry_spread"],
+                            "take_profit_spread": pos["take_profit_spread"],
+                            "leg1_open_price": pos["leg1_open_price"],
+                            "leg1_open_direction": pos["leg1_open_direction"],
+                            "leg2_open_price": pos["leg2_open_price"],
+                            "leg2_open_direction": pos["leg2_open_direction"],
+                            "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
+                            "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
+                            "leg1_close_price": leg1_close_exec,
+                            "leg1_close_direction": leg1_close_direction,
+                            "leg2_close_price": leg2_close_exec,
+                            "leg2_close_direction": leg2_close_direction,
+                            "fee": pos["entry_fee"] + exit_fee,
+                            "pnl": pnl,
+                        }
+                    )
                 trade_count += 1
 
             # 2) 再处理开仓：穿越触发；同一grid_level若已有持仓则跳过
@@ -557,6 +583,11 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
+                    execution_spread = leg1_open_exec - leg2_open_exec
+                    deviation = execution_spread - float(g)
+                    total_open_deviation += deviation
+                    total_open_deviation_abs += abs(deviation)
+                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -600,6 +631,11 @@ def run_backtest(
                         "leg2_qty": leg2_unit_qty,
                         "entry_fee": entry_fee,
                     }
+                    execution_spread = leg1_open_exec - leg2_open_exec
+                    deviation = execution_spread - float(g)
+                    total_open_deviation += deviation
+                    total_open_deviation_abs += abs(deviation)
+                    open_count += 1
                     opened_this_bar.add(gk)
                     trade_count += 1
 
@@ -607,28 +643,21 @@ def run_backtest(
             [p for p in positions.values() if p["side"] == "LONG"]
         )
 
-        equity = cash + leg1_qty * float(leg1_closes[i]) + leg2_qty * float(leg2_closes[i])
-        records.append(
-            {
-                "datetime": datetimes[i] if use_int64_datetimes else datetimes[i],
-                "open_time": int(open_times[i]),
-                "spread": float(spread),
-                "leg1_qty": float(leg1_qty),
-                "leg2_qty": float(leg2_qty),
-                "equity": float(equity),
-            }
-        )
+        _snapshot_equity_bar()
         prev_spread = spread
 
-    result = pd.DataFrame(records)
-    if use_int64_datetimes:
-        result["datetime"] = pd.to_datetime(result["open_time"], unit="ms", utc=True)
+    if lightweight:
+        result = pd.DataFrame()
+    else:
+        result = pd.DataFrame(records)
+        if use_int64_datetimes:
+            result["datetime"] = pd.to_datetime(result["open_time"], unit="ms", utc=True)
     if not result.empty and os.environ.get("BACKTEST_DEBUG_EQUITY") == "1":
         print(
             "[权益调试用] 前10行 leg1_qty / leg2_qty / equity:\n"
             + result[["leg1_qty", "leg2_qty", "equity"]].head(10).to_string(index=False)
         )
-    if result.empty:
+    if (not lightweight) and result.empty:
         closed_df = pd.DataFrame(closed_arbs)
         metrics = {
             "initial_capital": cfg.initial_capital,
@@ -655,8 +684,73 @@ def run_backtest(
             "backtest_start_datetime": "",
             "backtest_start_spread": float(spreads[start_idx]) if len(spreads) else 0.0,
             "cb_trip_count": int(cb_trip_count),
+            "avg_open_deviation": 0.0,
+            "avg_open_deviation_abs": 0.0,
+            "total_open_deviation_abs": 0.0,
         }
         return result, metrics, closed_df, 0.0, 0.0, cb_events
+
+    if lightweight:
+        # 指标计算（不依赖逐K result DataFrame）
+        final_equity = float(prev_equity) if prev_equity is not None else float(cfg.initial_capital)
+        total_pnl = float(final_equity - cfg.initial_capital)
+        total_return = float(final_equity / cfg.initial_capital - 1.0) if cfg.initial_capital != 0 else 0.0
+
+        if use_int64_datetimes:
+            actual_start = pd.Timestamp(int(datetimes[start_idx]), unit="ms", tz="UTC")
+            actual_end = pd.Timestamp(int(datetimes[-1]), unit="ms", tz="UTC")
+        else:
+            actual_start = datetimes[start_idx]
+            actual_end = datetimes[-1]
+        period_years = (actual_end - actual_start).total_seconds() / (365.0 * 24.0 * 3600.0)
+        annualized_return = 0.0
+        if period_years > 0 and cfg.initial_capital > 0:
+            annualized_return = (final_equity / cfg.initial_capital) ** (1.0 / period_years) - 1.0
+
+        sharpe = 0.0
+        if ret_n >= 2:
+            ret_var = ret_m2 / (ret_n - 1)
+            if ret_var > 0:
+                sharpe = ret_mean / (ret_var**0.5) * np.sqrt(365 * 24 * 60)
+
+        max_drawdown = float(max_drawdown_light)
+        mdd_abs = abs(float(max_drawdown))
+        calmar = float(annualized_return) / mdd_abs if mdd_abs > 0 else 0.0
+
+        avg_open_deviation = total_open_deviation / open_count if open_count else 0.0
+        avg_open_deviation_abs = total_open_deviation_abs / open_count if open_count else 0.0
+
+        metrics = {
+            "initial_capital": cfg.initial_capital,
+            "final_equity": float(final_equity),
+            "total_pnl": float(total_pnl),
+            "total_return": float(total_return),
+            "annualized_return": float(annualized_return),
+            "max_drawdown": float(max_drawdown),
+            "calmar_ratio": float(calmar),
+            "annualized_sharpe": float(sharpe),
+            "trade_units_executed": int(trade_count),
+            "total_taker_fee_paid": float(total_taker_fee),
+            "total_maker_fee_paid": float(total_maker_fee),
+            "total_fee_paid": float(total_taker_fee + total_maker_fee),
+            "grid_step": cfg.grid_step,
+            "grid_width": cfg.grid_width,
+            "max_grid_units_each_side": cfg.max_grid_units,
+            "qty": cfg.qty,
+            "closed_arb_count": 0,
+            "closed_arb_win_rate": 0.0,
+            "closed_arb_avg_pnl": 0.0,
+            "closed_arb_total_pnl": 0.0,
+            "backtest_start_idx": start_idx,
+            "backtest_start_datetime": str(actual_start),
+            "backtest_start_spread": float(spreads[start_idx]) if len(spreads) else 0.0,
+            "cb_trip_count": int(cb_trip_count),
+            "avg_open_deviation": float(avg_open_deviation),
+            "avg_open_deviation_abs": float(avg_open_deviation_abs),
+            "total_open_deviation_abs": float(total_open_deviation_abs),
+        }
+        closed_df = pd.DataFrame()
+        return result, metrics, closed_df, float(total_pnl), float(max_drawdown), cb_events
 
     equity_ret = result["equity"].pct_change().fillna(0.0)
     cummax_equity = result["equity"].cummax()
@@ -693,6 +787,8 @@ def run_backtest(
         total_realized_pnl = 0.0
 
     total_pnl = float(result["equity"].iloc[-1] - cfg.initial_capital)
+    avg_open_deviation = total_open_deviation / open_count if open_count else 0.0
+    avg_open_deviation_abs = total_open_deviation_abs / open_count if open_count else 0.0
     metrics = {
         "initial_capital": cfg.initial_capital,
         "final_equity": float(result["equity"].iloc[-1]),
@@ -718,6 +814,9 @@ def run_backtest(
         "backtest_start_datetime": str(actual_start),
         "backtest_start_spread": float(spreads[start_idx]),
         "cb_trip_count": int(cb_trip_count),
+        "avg_open_deviation": float(avg_open_deviation),
+        "avg_open_deviation_abs": float(avg_open_deviation_abs),
+        "total_open_deviation_abs": float(total_open_deviation_abs),
     }
     return result, metrics, closed_df, total_pnl, float(max_drawdown), cb_events
 
@@ -849,6 +948,9 @@ def build_html_report(
         "backtest_start_datetime": "回测起始时间",
         "backtest_start_spread": "回测起始价差",
         "cb_trip_count": "熔断触发次数",
+        "avg_open_deviation": "每笔开仓平均价差偏差（有方向）",
+        "avg_open_deviation_abs": "每笔开仓平均价差偏差（绝对值）",
+        "total_open_deviation_abs": "累计开仓价差偏差（绝对值）",
     }
 
     metric_rows = []

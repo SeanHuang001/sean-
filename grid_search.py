@@ -170,6 +170,7 @@ def _run_one(args_tuple: Tuple) -> Optional[Dict[str, Any]]:
         leg1_closes=_leg1,
         leg2_closes=_leg2,
         datetimes=_dts,
+        lightweight=True,
     )
 
     if metrics["trade_units_executed"] < 20:
