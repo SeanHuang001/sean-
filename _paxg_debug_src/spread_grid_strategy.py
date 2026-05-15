@@ -19,10 +19,6 @@ log = logging.getLogger(__name__)
 _SIGNALS_JSONL_PATH = Path("signals.jsonl")
 _signals_jsonl_lock = threading.Lock()
 
-_STRATEGY_PAIR_DEBUG_PATH = Path("strategy_pair_debug.jsonl")
-_strategy_pair_debug_lock = threading.Lock()
-_strategy_pair_debug_last_mono: dict[str, float] = {}
-
 _SIGNAL_WINDOW_SEC = 1.0
 _SIGNAL_THROTTLE_COUNT = 2
 _PENDING_TIMEOUT_SEC = 300.0
@@ -98,48 +94,6 @@ def _append_signals_jsonl(record: dict[str, Any]) -> None:
                 f.write(line)
     except Exception as e:
         log.warning("signals.jsonl 写入失败: %s", e)
-
-
-def _append_strategy_pair_debug(record: dict[str, Any]) -> None:
-    try:
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-        with _strategy_pair_debug_lock:
-            with open(_STRATEGY_PAIR_DEBUG_PATH, "a", encoding="utf-8") as f:
-                f.write(line)
-    except Exception as e:
-        log.debug("strategy_pair_debug.jsonl 写入失败: %s", e)
-
-
-def _throttled_pair_spreads_debug(
-    ps: "PairState",
-    entry_spread: Optional[float],
-    exit_spread: Optional[float],
-    event_ts_ms: Optional[int],
-) -> None:
-    """每秒最多写一行：诊断两腿时间戳是否不同步（猜想 A）。"""
-    key = ps.config.pair_name
-    now = time.monotonic()
-    last = _strategy_pair_debug_last_mono.get(key, 0.0)
-    if now - last < 1.0:
-        return
-    _strategy_pair_debug_last_mono[key] = now
-    age_ms = abs(int(ps.leg1_ms_t) - int(ps.leg2_ms_t))
-    _append_strategy_pair_debug(
-        {
-            "ts_ms": int(time.time() * 1000),
-            "pair": ps.config.pair_name,
-            "leg1_bid": ps.leg1_bid,
-            "leg1_ask": ps.leg1_ask,
-            "leg1_ms_t": ps.leg1_ms_t,
-            "leg2_bid": ps.leg2_bid,
-            "leg2_ask": ps.leg2_ask,
-            "leg2_ms_t": ps.leg2_ms_t,
-            "entry_spread": entry_spread,
-            "exit_spread": exit_spread,
-            "age_ms": age_ms,
-            "event_ts_ms": event_ts_ms,
-        }
-    )
 
 
 @dataclass
@@ -449,18 +403,15 @@ class SpreadGridStrategy:
     def _pair_spreads(self, ps: PairState) -> Optional[tuple[float, float, int]]:
         c = ps.config
         if ps.leg1_bid is None or ps.leg1_ask is None:
-            _throttled_pair_spreads_debug(ps, None, None, None)
             return None
         if ps.leg2_bid is None or ps.leg2_ask is None:
-            _throttled_pair_spreads_debug(ps, None, None, None)
+            return None
+        age = abs(ps.leg1_ms_t - ps.leg2_ms_t)
+        if age > c.max_tick_age_ms:
             return None
         entry_spread = ps.leg1_ask - ps.leg2_bid
         exit_spread = ps.leg1_bid - ps.leg2_ask
         ts_ms = min(ps.leg1_ms_t, ps.leg2_ms_t)
-        _throttled_pair_spreads_debug(ps, entry_spread, exit_spread, ts_ms)
-        age = abs(ps.leg1_ms_t - ps.leg2_ms_t)
-        if age > c.max_tick_age_ms:
-            return None
         return entry_spread, exit_spread, ts_ms
 
     def _update_leg_from_tick(self, ps: PairState, tick: dict[str, Any]) -> None:

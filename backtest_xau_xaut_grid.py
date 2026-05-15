@@ -1,13 +1,106 @@
+"""
+CHANGELOG (Bitmart 保证金 / 强平)
+- 2026-05-14: 接入 Bitmart 固定 MMR 维持保证金模型（MM = max(0, 名义×0.0067 - 33.2)）。
+- 每根 K 线按逐仓未实现盈亏汇总权益，若 equity < 总维持保证金则按标记价强平全部持仓并结束回测。
+- 权益曲线新增 leg1_notional / leg2_notional / total_mm / margin_ratio。
+- metrics / result.attrs 新增 liquidated、liquidation_bar、final_equity。
+- 导出 stress_dd_analytic_bound() 供 grid_search 压力测试与预筛（固定 MMR，含压力保证金率）。
+"""
 import argparse
 import html
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# Bitmart 固定维持保证金档位（75x 杠杆回测统一使用）
+FIXED_MMR = 0.0067
+FIXED_MA = 33.2
+
+# 合约面值（张 → 标的数量）；默认 leg1=XAU、leg2=XAUT，其它交易对可在 run_backtest 传入覆盖
+LEG1_CONTRACT_FACE_DEFAULT = 0.01  # XAUUSDT oz/张
+LEG2_CONTRACT_FACE_DEFAULT = 0.001  # XAUTUSDT oz/张
+
+
+def compute_mm_fixed(notional: float) -> float:
+    """固定 MMR 模型：MM = max(0, notional * FIXED_MMR - FIXED_MA)"""
+    return max(0.0, float(notional) * FIXED_MMR - FIXED_MA)
+
+
+def leg_notional(contracts: float, contract_face: float, mark_price: float) -> float:
+    """名义价值 = |张数| × 合约面值 × 标记价"""
+    return abs(float(contracts)) * float(contract_face) * float(mark_price)
+
+
+def stress_dd_analytic_bound(
+    cfg: "GridConfig",
+    initial_capital: float,
+    stress_spread: float,
+    leg1_mark: float,
+    leg1_face: float = LEG1_CONTRACT_FACE_DEFAULT,
+    leg2_face: float = LEG2_CONTRACT_FACE_DEFAULT,
+) -> Dict[str, float]:
+    """
+    固定 MMR 下压力情景解析估计（满 long 栈、价差跌至 stress_spread）：
+    - 压力回撤%：价差不利方向的理论亏损上界 / 本金
+    - 压力维持保证金、压力权益估计、压力保证金率（<1 表示该情景下会触发强平）
+    - 压力强平线：在满 long 栈假设下，权益降至维持保证金时对应的价差（解析近似）
+    """
+    step = float(cfg.grid_step)
+    width = float(cfg.grid_width)
+    qty = float(cfg.qty)
+    center = float(cfg.grid_center)
+    capital = float(initial_capital)
+
+    if step <= 0 or capital <= 0:
+        return {
+            "stress_drawdown_pct": 0.0,
+            "stress_total_mm": 0.0,
+            "stress_equity_est": capital,
+            "stress_margin_ratio": float("inf"),
+            "stress_would_liquidate": 0.0,
+            "stress_liquidation_spread": float("nan"),
+        }
+
+    n_long = int(math.floor(width / step))
+    spread_drop = center - float(stress_spread)
+    if spread_drop > 0 and n_long > 0:
+        stress_loss = qty * (n_long * spread_drop - step * n_long * (n_long + 1) / 2.0)
+        stress_loss = max(float(stress_loss), 0.0)
+    else:
+        stress_loss = 0.0
+
+    stress_dd_pct = stress_loss / capital * 100.0
+    n_contracts = n_long * qty
+    leg2_mark = float(leg1_mark) - float(stress_spread)
+    l1n = leg_notional(n_contracts, leg1_face, leg1_mark)
+    l2n = leg_notional(n_contracts, leg2_face, leg2_mark)
+    total_mm = compute_mm_fixed(l1n) + compute_mm_fixed(l2n)
+    equity_est = capital - stress_loss
+    margin_ratio = equity_est / total_mm if total_mm > 0 else float("inf")
+    would_liq = 1.0 if (total_mm > 0 and equity_est < total_mm) else 0.0
+
+    # 满 long 栈下，价差每下移 1 单位约增加 qty*n_long 亏损；反解 equity≈MM 的价差
+    liq_spread = float("nan")
+    if n_long > 0 and qty > 0:
+        loss_per_spread_unit = qty * n_long
+        need_loss = capital - total_mm
+        if loss_per_spread_unit > 0 and need_loss > 0:
+            liq_spread = center - need_loss / loss_per_spread_unit
+
+    return {
+        "stress_drawdown_pct": float(stress_dd_pct),
+        "stress_total_mm": float(total_mm),
+        "stress_equity_est": float(equity_est),
+        "stress_margin_ratio": float(margin_ratio),
+        "stress_would_liquidate": float(would_liq),
+        "stress_liquidation_spread": float(liq_spread),
+    }
 
 
 @dataclass
@@ -105,6 +198,22 @@ def spread_to_target_units(spread: float, cfg: GridConfig) -> int:
     return units
 
 
+def _attach_run_meta(
+    result: pd.DataFrame,
+    metrics: Dict[str, float],
+    liquidated: bool,
+    liquidation_bar: int | None,
+    final_equity: float,
+) -> None:
+    """回测元数据写入 metrics 与 result.attrs，便于报告与 grid_search 读取。"""
+    metrics["liquidated"] = float(1.0 if liquidated else 0.0)
+    metrics["liquidation_bar"] = float(liquidation_bar) if liquidation_bar is not None else float("nan")
+    metrics["final_equity"] = float(final_equity)
+    result.attrs["liquidated"] = bool(liquidated)
+    result.attrs["liquidation_bar"] = liquidation_bar
+    result.attrs["final_equity"] = float(final_equity)
+
+
 def run_backtest(
     df: pd.DataFrame | None,
     cfg: GridConfig,
@@ -113,6 +222,8 @@ def run_backtest(
     leg2_closes: np.ndarray | None = None,
     datetimes: list | None = None,
     lightweight: bool = False,
+    leg1_contract_face: float = LEG1_CONTRACT_FACE_DEFAULT,
+    leg2_contract_face: float = LEG2_CONTRACT_FACE_DEFAULT,
 ) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame, float, float, List[Dict[str, Any]]]:
     cash = cfg.initial_capital
     leg1_qty = 0.0
@@ -166,6 +277,8 @@ def run_backtest(
     total_open_deviation = 0.0
     total_open_deviation_abs = 0.0
     open_count = 0
+    liquidated = False
+    liquidation_bar: int | None = None
 
     # lightweight 模式：用于网格搜索，避免为每次回测生成逐K权益曲线 DataFrame（节省大量内存）
     prev_equity: float | None = None
@@ -176,10 +289,112 @@ def run_backtest(
     ret_mean = 0.0
     ret_m2 = 0.0
 
-    def _snapshot_equity_bar() -> None:
-        """记录当根 K 线结束权益（与熔断分支共用）；lightweight 下同步回撤/夏普统计。"""
+    def _unrealized_pnl_total() -> float:
+        """按每个网格仓位 entry 价分别计算未实现盈亏后求和（不用净持仓估算）。"""
+        upl = 0.0
+        for pos in positions.values():
+            if pos["side"] == "LONG":
+                upl += (leg1_px - pos["leg1_open_price"]) * pos["leg1_qty"]
+                upl += (pos["leg2_open_price"] - leg2_px) * pos["leg2_qty"]
+            else:
+                upl += (pos["leg1_open_price"] - leg1_px) * pos["leg1_qty"]
+                upl += (leg2_px - pos["leg2_open_price"]) * pos["leg2_qty"]
+        return float(upl)
+
+    def _account_equity_margin() -> Tuple[float, float, float, float, float]:
+        """权益（cash + 逐仓未实现）、两腿名义价值、总维持保证金、保证金率。"""
+        equity = float(cash) + _unrealized_pnl_total()
+        l1_notional = leg_notional(leg1_qty, leg1_contract_face, leg1_px)
+        l2_notional = leg_notional(leg2_qty, leg2_contract_face, leg2_px)
+        total_mm = compute_mm_fixed(l1_notional) + compute_mm_fixed(l2_notional)
+        margin_ratio = equity / total_mm if total_mm > 0 else float("inf")
+        return equity, l1_notional, l2_notional, total_mm, margin_ratio
+
+    def _force_liquidate_all_at_market() -> None:
+        """Bitmart 强平：所有持仓按当根 K 线 close（标记价）立即平仓。"""
+        nonlocal cash, leg1_qty, leg2_qty, trade_count, total_taker_fee, total_maker_fee
+        for g in list(positions.keys()):
+            pos = positions[g]
+            leg1_close_exec = leg1_px
+            leg2_close_exec = leg2_px
+            maker_fee = pos["leg1_qty"] * leg1_close_exec * cfg.maker_fee
+            taker_fee = pos["leg2_qty"] * leg2_close_exec * cfg.taker_fee
+            exit_fee = maker_fee + taker_fee
+            total_taker_fee += taker_fee
+            total_maker_fee += maker_fee
+            if pos["side"] == "LONG":
+                cash += pos["leg1_qty"] * leg1_close_exec
+                cash -= pos["leg2_qty"] * leg2_close_exec
+                cash -= exit_fee
+                leg1_qty -= pos["leg1_qty"]
+                leg2_qty += pos["leg2_qty"]
+                pnl = (
+                    (leg1_close_exec - pos["leg1_open_price"]) * pos["leg1_qty"]
+                    + (pos["leg2_open_price"] - leg2_close_exec) * pos["leg2_qty"]
+                    - (pos["entry_fee"] + exit_fee)
+                )
+                leg1_close_direction = "SELL"
+                leg2_close_direction = "BUY"
+            else:
+                cash -= pos["leg1_qty"] * leg1_close_exec
+                cash += pos["leg2_qty"] * leg2_close_exec
+                cash -= exit_fee
+                leg1_qty += pos["leg1_qty"]
+                leg2_qty -= pos["leg2_qty"]
+                pnl = (
+                    (pos["leg1_open_price"] - leg1_close_exec) * pos["leg1_qty"]
+                    + (leg2_close_exec - pos["leg2_open_price"]) * pos["leg2_qty"]
+                    - (pos["entry_fee"] + exit_fee)
+                )
+                leg1_close_direction = "BUY"
+                leg2_close_direction = "SELL"
+            if not lightweight:
+                closed_arbs.append(
+                    {
+                        "open_datetime": pos["open_datetime"],
+                        "close_datetime": dt,
+                        "spread_side": "LONG_SPREAD" if pos["side"] == "LONG" else "SHORT_SPREAD",
+                        "grid_level": pos["grid_level"],
+                        "entry_spread": pos["entry_spread"],
+                        "take_profit_spread": pos["take_profit_spread"],
+                        "leg1_open_price": pos["leg1_open_price"],
+                        "leg1_open_direction": pos["leg1_open_direction"],
+                        "leg2_open_price": pos["leg2_open_price"],
+                        "leg2_open_direction": pos["leg2_open_direction"],
+                        "leg1_open_amount": pos["leg1_qty"] * pos["leg1_open_price"],
+                        "leg2_open_amount": pos["leg2_qty"] * pos["leg2_open_price"],
+                        "leg1_close_price": leg1_close_exec,
+                        "leg1_close_direction": leg1_close_direction,
+                        "leg2_close_price": leg2_close_exec,
+                        "leg2_close_direction": leg2_close_direction,
+                        "fee": pos["entry_fee"] + exit_fee,
+                        "pnl": pnl,
+                        "margin_liquidation": True,
+                    }
+                )
+            trade_count += 1
+        positions.clear()
+        locked_long_levels.clear()
+        locked_short_levels.clear()
+        locked_reopen_long_levels.clear()
+        locked_reopen_short_levels.clear()
+        locked_tp_both.clear()
+
+    def _snapshot_equity_bar() -> bool:
+        """
+        记录当根 K 线结束权益；检查 equity < 总维持保证金则强平。
+        返回 True 表示本根 K 已强平，主循环应 break。
+        """
         nonlocal prev_equity, peak_equity, max_drawdown_light, ret_n, ret_mean, ret_m2
-        eq = cash + leg1_qty * leg1_px + leg2_qty * leg2_px
+        nonlocal liquidated, liquidation_bar
+
+        eq, l1_notional, l2_notional, total_mm, margin_ratio = _account_equity_margin()
+        if (not liquidated) and total_mm > 0 and eq < total_mm:
+            _force_liquidate_all_at_market()
+            liquidated = True
+            liquidation_bar = int(i)
+            eq, l1_notional, l2_notional, total_mm, margin_ratio = _account_equity_margin()
+
         if lightweight:
             if prev_equity is not None and prev_equity != 0:
                 r = float(eq / prev_equity - 1.0)
@@ -203,8 +418,13 @@ def run_backtest(
                     "leg1_qty": float(leg1_qty),
                     "leg2_qty": float(leg2_qty),
                     "equity": float(eq),
+                    "leg1_notional": float(l1_notional),
+                    "leg2_notional": float(l2_notional),
+                    "total_mm": float(total_mm),
+                    "margin_ratio": float(margin_ratio),
                 }
             )
+        return bool(liquidated)
 
     use_int64_datetimes = df is None
     for i in range(start_idx, len(spreads)):
@@ -332,7 +552,8 @@ def run_backtest(
                     locked_reopen_short_levels.clear()
                     locked_tp_both.clear()
                     prev_spread = spread
-                    _snapshot_equity_bar()
+                    if _snapshot_equity_bar():
+                        break
                     continue
 
             else:
@@ -415,11 +636,13 @@ def run_backtest(
                         }
                     )
                     prev_spread = spread
-                    _snapshot_equity_bar()
+                    if _snapshot_equity_bar():
+                        break
                     continue
                 else:
                     prev_spread = spread
-                    _snapshot_equity_bar()
+                    if _snapshot_equity_bar():
+                        break
                     continue
 
         if i > start_idx:
@@ -643,7 +866,8 @@ def run_backtest(
             [p for p in positions.values() if p["side"] == "LONG"]
         )
 
-        _snapshot_equity_bar()
+        if _snapshot_equity_bar():
+            break
         prev_spread = spread
 
     if lightweight:
@@ -688,6 +912,7 @@ def run_backtest(
             "avg_open_deviation_abs": 0.0,
             "total_open_deviation_abs": 0.0,
         }
+        _attach_run_meta(result, metrics, liquidated, liquidation_bar, float(cfg.initial_capital))
         return result, metrics, closed_df, 0.0, 0.0, cb_events
 
     if lightweight:
@@ -750,6 +975,7 @@ def run_backtest(
             "total_open_deviation_abs": float(total_open_deviation_abs),
         }
         closed_df = pd.DataFrame()
+        _attach_run_meta(result, metrics, liquidated, liquidation_bar, float(final_equity))
         return result, metrics, closed_df, float(total_pnl), float(max_drawdown), cb_events
 
     equity_ret = result["equity"].pct_change().fillna(0.0)
@@ -818,6 +1044,13 @@ def run_backtest(
         "avg_open_deviation_abs": float(avg_open_deviation_abs),
         "total_open_deviation_abs": float(total_open_deviation_abs),
     }
+    _attach_run_meta(
+        result,
+        metrics,
+        liquidated,
+        liquidation_bar,
+        float(result["equity"].iloc[-1]) if not result.empty else float(cfg.initial_capital),
+    )
     return result, metrics, closed_df, total_pnl, float(max_drawdown), cb_events
 
 
@@ -951,6 +1184,8 @@ def build_html_report(
         "avg_open_deviation": "每笔开仓平均价差偏差（有方向）",
         "avg_open_deviation_abs": "每笔开仓平均价差偏差（绝对值）",
         "total_open_deviation_abs": "累计开仓价差偏差（绝对值）",
+        "liquidated": "是否触发强平",
+        "liquidation_bar": "强平 K 线索引",
     }
 
     metric_rows = []
@@ -1248,6 +1483,18 @@ def main() -> None:
         default=0.0,
         help="重进值，重进线=center±cb_reentry，需小于 cb_trip",
     )
+    parser.add_argument(
+        "--from_date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="回测区间起点（含当日，UTC，与 K 线 datetime 一致）",
+    )
+    parser.add_argument(
+        "--to_date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="回测区间终点（含当日，UTC）",
+    )
     args = parser.parse_args()
 
     args.leg1 = _resolve_input_csv(args.leg1)
@@ -1257,6 +1504,15 @@ def main() -> None:
     pair_display = args.pair_name.strip() or default_pair
 
     df = load_and_merge(args.leg1, args.leg2)
+    if args.from_date:
+        ts0 = pd.Timestamp(args.from_date, tz="UTC")
+        df = df[df["datetime"] >= ts0]
+    if args.to_date:
+        ts1 = pd.Timestamp(args.to_date, tz="UTC") + pd.Timedelta(days=1)
+        df = df[df["datetime"] < ts1]
+    df = df.reset_index(drop=True)
+    if df.empty:
+        raise SystemExit("筛选日期后无 K 线数据，请检查 --from_date / --to_date 与 CSV 覆盖范围。")
     grid_center = float(args.center) if args.center is not None else float(df["spread"].mean())
 
     cfg = GridConfig(
@@ -1274,7 +1530,14 @@ def main() -> None:
 
     os.makedirs(args.report_dir, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H-%M")
-    run_report_dir = os.path.join(args.report_dir, f"{run_id}_{pair_display.replace('/', '-')}")
+    date_tag = ""
+    if args.from_date or args.to_date:
+        fd = args.from_date or "start"
+        td = args.to_date or "end"
+        date_tag = f"_{fd}_{td}"
+    run_report_dir = os.path.join(
+        args.report_dir, f"{run_id}_{pair_display.replace('/', '-')}{date_tag}"
+    )
     os.makedirs(run_report_dir, exist_ok=True)
 
     result, metrics, closed_df, _, _, cb_events = run_backtest(df, cfg)
@@ -1290,6 +1553,8 @@ def main() -> None:
         f"maker_fee={cfg.maker_fee}, taker_fee={cfg.taker_fee}, "
         f"taker_slippage_pt={cfg.taker_slippage_pt}；{leg1_label}/{leg2_label} 价差网格。"
     )
+    if args.from_date or args.to_date:
+        fee_note += f" 样本区间(UTC): {args.from_date or '…'} ~ {args.to_date or '…'}。"
     build_html_report(
         metrics=metrics,
         pair_name=pair_display,

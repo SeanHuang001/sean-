@@ -14,7 +14,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from backtest_xau_xaut_grid import GridConfig, load_and_merge, run_backtest
+from backtest_xau_xaut_grid import (
+    GridConfig,
+    load_and_merge,
+    run_backtest,
+    stress_dd_analytic_bound,
+)
 
 
 def _resolve_leg_csv(data_dir: str, filename: str) -> str:
@@ -136,20 +141,23 @@ def _run_one(args_tuple: Tuple) -> Optional[Dict[str, Any]]:
 
     if float(step) <= 0:
         return None
-    n_long = math.floor(float(width) / float(step))
-    spread_drop = float(center) - float(stress_spread)  # 正值表示价差下跌
-    if spread_drop > 0 and n_long > 0:
-        # 第k张long仓开仓价差为 center - k*step，到stress_spread时亏损为：
-        # (center - k*step) - stress_spread = spread_drop - k*step
-        # 累加 k=1..n_long：n_long*spread_drop - step*n_long*(n_long+1)/2
-        stress_loss = float(qty) * (
-            n_long * spread_drop - float(step) * n_long * (n_long + 1) / 2.0
-        )
-        stress_loss = max(stress_loss, 0.0)  # 若参数导致结果为负则归零
-    else:
-        stress_loss = 0.0
-    stress_drawdown_pct = stress_loss / float(capital) * 100.0
-    if stress_drawdown_pct > 50.0:
+
+    cfg_pre = GridConfig(
+        initial_capital=capital,
+        grid_center=center,
+        grid_step=float(step),
+        grid_width=float(width),
+        qty=float(qty),
+        maker_fee=maker_fee,
+        taker_fee=taker_fee,
+        taker_slippage_pt=slippage,
+    )
+    stress_info = stress_dd_analytic_bound(cfg_pre, capital, float(stress_spread), float(leg1_price))
+    stress_drawdown_pct = stress_info["stress_drawdown_pct"]
+    # 固定 MMR 预筛：理论压力回撤上界 >80% 或压力情景下权益低于维持保证金，跳过回测
+    if stress_drawdown_pct > 80.0:
+        return None
+    if stress_info["stress_would_liquidate"] > 0:
         return None
 
     cfg = GridConfig(
@@ -179,6 +187,7 @@ def _run_one(args_tuple: Tuple) -> Optional[Dict[str, Any]]:
     mdd_abs = abs(float(max_drawdown))
     calmar = metrics["annualized_return"] / mdd_abs if mdd_abs > 0 else 0.0
 
+    liq_spread = stress_info["stress_liquidation_spread"]
     return {
         "grid_step": float(step),
         "grid_width": float(width),
@@ -190,6 +199,10 @@ def _run_one(args_tuple: Tuple) -> Optional[Dict[str, Any]]:
         "总手续费": round(float(metrics["total_fee_paid"]), 2),
         "最大回撤百分比": round(float(max_drawdown) * 100, 2),
         "压力回撤%": round(float(stress_drawdown_pct), 2),
+        "压力维持保证金": round(float(stress_info["stress_total_mm"]), 2),
+        "压力保证金率": round(float(stress_info["stress_margin_ratio"]), 4),
+        "压力强平线": round(float(liq_spread), 4) if liq_spread == liq_spread else None,
+        "回测强平": int(metrics.get("liquidated", 0)),
         "卡玛比率": round(float(calmar), 2),
         "交易次数": int(metrics["trade_units_executed"]),
         "回测起始时间": str(metrics.get("backtest_start_datetime", "")),
@@ -406,6 +419,10 @@ def write_report(
         "年化收益率",
         "最大回撤百分比",
         "压力回撤%",
+        "压力维持保证金",
+        "压力保证金率",
+        "压力强平线",
+        "回测强平",
         "卡玛比率",
         "total_pnl",
         "总手续费",
@@ -418,7 +435,8 @@ def write_report(
         if df.empty:
             lines.append("(无)")
         else:
-            lines.append(_fmt_table(df[cols_show].head(50)))
+            show_cols = [c for c in cols_show if c in df.columns]
+            lines.append(_fmt_table(df[show_cols].head(50)))
         lines.append("")
 
     if combined.empty:

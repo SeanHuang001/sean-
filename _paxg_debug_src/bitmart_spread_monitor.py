@@ -7,7 +7,6 @@ import queue
 import threading
 import time
 import tkinter as tk
-from pathlib import Path
 from tkinter import font as tkfont
 from typing import Optional
 
@@ -36,9 +35,6 @@ SYMBOLS = (
     "XBRUSDT",
 )
 SILENCE_SEC = 5.0
-_RAW_TICKS_PATH = Path("raw_ticks.jsonl")
-_raw_ticks_lock = threading.Lock()
-_RAW_TICK_SYMBOLS = frozenset({"PAXGUSDT", "XAUTUSDT"})
 PING_INTERVAL = 15.0
 RECONNECT_DELAY = 3.0
 UI_POLL_MS = 50
@@ -100,23 +96,6 @@ class BitMartFeed(threading.Thread):
             except (TypeError, ValueError):
                 ms_t = int(time.time() * 1000)
         self._put_tick(sym, bid, ask, ms_t)
-        if sym in _RAW_TICK_SYMBOLS:
-            wall_ms = int(time.time() * 1000)
-            rec = {
-                "wall_ms": wall_ms,
-                "symbol": sym,
-                "bid": bid,
-                "ask": ask,
-                "server_ms_t": ms_t,
-                "raw": message,
-            }
-            try:
-                line = json.dumps(rec, ensure_ascii=False) + "\n"
-                with _raw_ticks_lock:
-                    with open(_RAW_TICKS_PATH, "a", encoding="utf-8") as f:
-                        f.write(line)
-            except Exception as e:
-                log.debug("raw_ticks.jsonl 写入失败: %s", e)
 
     def _on_open(self, ws: websocket.WebSocketApp) -> None:
         self._touch_recv()

@@ -1,0 +1,1661 @@
+
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XTI-XBR 网格套利回测报告</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --danger: #dc2626;
+      --border: #e5e7eb;
+      --head: #f8fafc;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 28%);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+    .hero {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 22px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      color: #111827;
+    }
+    .note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .section {
+      margin-top: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .metric-table, .detail-table {
+      border-collapse: collapse;
+      width: 100%;
+      overflow: hidden;
+      border-radius: 10px;
+    }
+    .metric-table th, .metric-table td, .detail-table th, .detail-table td {
+      border: 1px solid var(--border);
+      padding: 9px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .metric-table th, .detail-table th {
+      background: var(--head);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .metric-table tr:nth-child(even), .detail-table tr:nth-child(even) {
+      background: #fbfdff;
+    }
+    .chart-wrap {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+    }
+    .table-scroll {
+      max-height: 520px;
+      overflow: auto;
+      border-radius: 10px;
+    }
+    .cb-trip { color: #dc2626; font-weight: 600; }
+    .cb-reentry { color: #16a34a; font-weight: 600; }
+    .pnl-pos { color: #16a34a; font-weight: 600; }
+    .pnl-neg { color: #dc2626; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <h1>XTI-XBR 价差网格套利回测报告</h1>
+      <p class="note">maker_fee=4.2e-05, taker_fee=4.2e-05, taker_slippage_pt=0.2；XTIUSDT/XBRUSDT 价差网格。</p>
+    </div>
+
+    <div class="section">
+      <h2>关键指标</h2>
+      <table class="metric-table">
+        <thead><tr><th>指标</th><th>数值</th></tr></thead>
+        <tbody>
+          <tr><td>初始资金</td><td>10,000.000000</td></tr>
+<tr><td>最终权益</td><td>11,684.866845</td></tr>
+<tr><td>total_pnl</td><td>1,684.866845</td></tr>
+<tr><td>总收益率</td><td>16.85%</td></tr>
+<tr><td>年化收益率</td><td>133.35%</td></tr>
+<tr><td>最大回撤</td><td>-44.54%</td></tr>
+<tr><td>卡玛比率</td><td>2.993915</td></tr>
+<tr><td>年化夏普比率</td><td>1.350214</td></tr>
+<tr><td>成交笔数（开+平）</td><td>201</td></tr>
+<tr><td>吃单手续费总额</td><td>42.229878</td></tr>
+<tr><td>挂单手续费总额</td><td>42.663277</td></tr>
+<tr><td>总手续费</td><td>84.893155</td></tr>
+<tr><td>网格间距</td><td>0.600000</td></tr>
+<tr><td>网格宽度</td><td>3.400000</td></tr>
+<tr><td>每侧最大网格数</td><td>6</td></tr>
+<tr><td>每格下单数量</td><td>48.000000</td></tr>
+<tr><td>已完成套利笔数</td><td>98</td></tr>
+<tr><td>已完成套利胜率</td><td>100.00%</td></tr>
+<tr><td>单笔平均盈利</td><td>27.953156</td></tr>
+<tr><td>已完成套利总盈利</td><td>2,739.409304</td></tr>
+<tr><td>回测起始索引</td><td>58459</td></tr>
+<tr><td>回测起始时间</td><td>2026-03-08 22:20:00+00:00</td></tr>
+<tr><td>回测起始价差</td><td>2.100000</td></tr>
+<tr><td>熔断触发次数</td><td>0</td></tr>
+<tr><td>每笔开仓平均价差偏差（有方向）</td><td>-0.032718</td></tr>
+<tr><td>每笔开仓平均价差偏差（绝对值）</td><td>0.198544</td></tr>
+<tr><td>累计开仓价差偏差（绝对值）</td><td>20.450000</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>权益曲线</h2>
+      <div class="chart-wrap">
+        <img src="equity_curve.png" alt="equity curve" />
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>最大回撤曲线</h2>
+      <div class="chart-wrap">
+        <img src="drawdown_curve.png" alt="drawdown curve" />
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>成交明细（按一次完整套利开平）</h2>
+      <div class="table-scroll">
+        <table class="dataframe detail-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>开仓时间</th>
+      <th>平仓时间</th>
+      <th>套利方向</th>
+      <th>XTIUSDT开仓价格</th>
+      <th>XTIUSDT开仓方向</th>
+      <th>XBRUSDT开仓价格</th>
+      <th>XBRUSDT开仓方向</th>
+      <th>XTIUSDT平仓价格</th>
+      <th>XTIUSDT平仓方向</th>
+      <th>XBRUSDT平仓价格</th>
+      <th>XBRUSDT平仓方向</th>
+      <th>手续费</th>
+      <th>盈利</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>2026-03-08 22:23:00</td>
+      <td>2026-03-08 22:24:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>107.540</td>
+      <td>SELL</td>
+      <td>103.980</td>
+      <td>BUY</td>
+      <td>107.240</td>
+      <td>BUY</td>
+      <td>104.280</td>
+      <td>SELL</td>
+      <td>0.8528</td>
+      <td>27.9472</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 22:23:00</td>
+      <td>2026-03-08 22:27:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>107.540</td>
+      <td>SELL</td>
+      <td>103.980</td>
+      <td>BUY</td>
+      <td>107.240</td>
+      <td>BUY</td>
+      <td>104.280</td>
+      <td>SELL</td>
+      <td>0.8528</td>
+      <td>27.9472</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 22:21:00</td>
+      <td>2026-03-08 22:28:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>106.340</td>
+      <td>SELL</td>
+      <td>103.820</td>
+      <td>BUY</td>
+      <td>106.040</td>
+      <td>BUY</td>
+      <td>104.120</td>
+      <td>SELL</td>
+      <td>0.8474</td>
+      <td>27.9526</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 22:34:00</td>
+      <td>2026-03-08 22:50:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>106.200</td>
+      <td>SELL</td>
+      <td>104.130</td>
+      <td>BUY</td>
+      <td>105.900</td>
+      <td>BUY</td>
+      <td>104.430</td>
+      <td>SELL</td>
+      <td>0.8481</td>
+      <td>27.9519</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:04:00</td>
+      <td>2026-03-08 23:07:00</td>
+      <td>LONG_SPREAD</td>
+      <td>103.300</td>
+      <td>BUY</td>
+      <td>103.420</td>
+      <td>SELL</td>
+      <td>103.600</td>
+      <td>SELL</td>
+      <td>103.120</td>
+      <td>BUY</td>
+      <td>0.8335</td>
+      <td>27.9665</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:04:00</td>
+      <td>2026-03-08 23:07:00</td>
+      <td>LONG_SPREAD</td>
+      <td>103.300</td>
+      <td>BUY</td>
+      <td>103.420</td>
+      <td>SELL</td>
+      <td>103.600</td>
+      <td>SELL</td>
+      <td>103.120</td>
+      <td>BUY</td>
+      <td>0.8335</td>
+      <td>27.9665</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:19:00</td>
+      <td>2026-03-08 23:37:00</td>
+      <td>LONG_SPREAD</td>
+      <td>103.740</td>
+      <td>BUY</td>
+      <td>103.740</td>
+      <td>SELL</td>
+      <td>104.040</td>
+      <td>SELL</td>
+      <td>103.440</td>
+      <td>BUY</td>
+      <td>0.8366</td>
+      <td>27.9634</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:40:00</td>
+      <td>2026-03-08 23:49:00</td>
+      <td>LONG_SPREAD</td>
+      <td>102.530</td>
+      <td>BUY</td>
+      <td>103.460</td>
+      <td>SELL</td>
+      <td>102.830</td>
+      <td>SELL</td>
+      <td>103.160</td>
+      <td>BUY</td>
+      <td>0.8306</td>
+      <td>27.9694</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:40:00</td>
+      <td>2026-03-08 23:51:00</td>
+      <td>LONG_SPREAD</td>
+      <td>102.530</td>
+      <td>BUY</td>
+      <td>103.460</td>
+      <td>SELL</td>
+      <td>102.830</td>
+      <td>SELL</td>
+      <td>103.160</td>
+      <td>BUY</td>
+      <td>0.8306</td>
+      <td>27.9694</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:10:00</td>
+      <td>2026-03-08 23:53:00</td>
+      <td>LONG_SPREAD</td>
+      <td>104.000</td>
+      <td>BUY</td>
+      <td>103.520</td>
+      <td>SELL</td>
+      <td>104.300</td>
+      <td>SELL</td>
+      <td>103.220</td>
+      <td>BUY</td>
+      <td>0.8367</td>
+      <td>27.9633</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:14:00</td>
+      <td>2026-03-09 00:23:00</td>
+      <td>LONG_SPREAD</td>
+      <td>106.940</td>
+      <td>BUY</td>
+      <td>108.190</td>
+      <td>SELL</td>
+      <td>107.240</td>
+      <td>SELL</td>
+      <td>107.890</td>
+      <td>BUY</td>
+      <td>0.8674</td>
+      <td>27.9326</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:02:00</td>
+      <td>2026-03-09 00:37:00</td>
+      <td>LONG_SPREAD</td>
+      <td>107.040</td>
+      <td>BUY</td>
+      <td>107.750</td>
+      <td>SELL</td>
+      <td>107.340</td>
+      <td>SELL</td>
+      <td>107.450</td>
+      <td>BUY</td>
+      <td>0.8660</td>
+      <td>27.9340</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:43:00</td>
+      <td>2026-03-09 00:50:00</td>
+      <td>LONG_SPREAD</td>
+      <td>109.100</td>
+      <td>BUY</td>
+      <td>110.020</td>
+      <td>SELL</td>
+      <td>109.400</td>
+      <td>SELL</td>
+      <td>109.720</td>
+      <td>BUY</td>
+      <td>0.8835</td>
+      <td>27.9165</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:55:00</td>
+      <td>2026-03-09 01:04:00</td>
+      <td>LONG_SPREAD</td>
+      <td>109.060</td>
+      <td>BUY</td>
+      <td>109.850</td>
+      <td>SELL</td>
+      <td>109.360</td>
+      <td>SELL</td>
+      <td>109.550</td>
+      <td>BUY</td>
+      <td>0.8826</td>
+      <td>27.9174</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:09:00</td>
+      <td>2026-03-09 01:18:00</td>
+      <td>LONG_SPREAD</td>
+      <td>107.770</td>
+      <td>BUY</td>
+      <td>108.600</td>
+      <td>SELL</td>
+      <td>108.070</td>
+      <td>SELL</td>
+      <td>108.300</td>
+      <td>BUY</td>
+      <td>0.8724</td>
+      <td>27.9276</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:01:00</td>
+      <td>2026-03-09 01:26:00</td>
+      <td>LONG_SPREAD</td>
+      <td>106.900</td>
+      <td>BUY</td>
+      <td>107.490</td>
+      <td>SELL</td>
+      <td>107.200</td>
+      <td>SELL</td>
+      <td>107.190</td>
+      <td>BUY</td>
+      <td>0.8644</td>
+      <td>27.9356</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:41:00</td>
+      <td>2026-03-09 01:46:00</td>
+      <td>LONG_SPREAD</td>
+      <td>109.450</td>
+      <td>BUY</td>
+      <td>110.140</td>
+      <td>SELL</td>
+      <td>109.750</td>
+      <td>SELL</td>
+      <td>109.840</td>
+      <td>BUY</td>
+      <td>0.8854</td>
+      <td>27.9146</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:47:00</td>
+      <td>2026-03-09 01:48:00</td>
+      <td>LONG_SPREAD</td>
+      <td>110.720</td>
+      <td>BUY</td>
+      <td>112.230</td>
+      <td>SELL</td>
+      <td>111.020</td>
+      <td>SELL</td>
+      <td>111.930</td>
+      <td>BUY</td>
+      <td>0.8989</td>
+      <td>27.9011</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:47:00</td>
+      <td>2026-03-09 01:50:00</td>
+      <td>LONG_SPREAD</td>
+      <td>110.720</td>
+      <td>BUY</td>
+      <td>112.230</td>
+      <td>SELL</td>
+      <td>111.020</td>
+      <td>SELL</td>
+      <td>111.930</td>
+      <td>BUY</td>
+      <td>0.8989</td>
+      <td>27.9011</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:29:00</td>
+      <td>2026-03-09 01:53:00</td>
+      <td>LONG_SPREAD</td>
+      <td>108.990</td>
+      <td>BUY</td>
+      <td>109.120</td>
+      <td>SELL</td>
+      <td>109.290</td>
+      <td>SELL</td>
+      <td>108.820</td>
+      <td>BUY</td>
+      <td>0.8794</td>
+      <td>27.9206</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:55:00</td>
+      <td>2026-03-09 01:56:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.580</td>
+      <td>BUY</td>
+      <td>112.850</td>
+      <td>SELL</td>
+      <td>112.880</td>
+      <td>SELL</td>
+      <td>112.550</td>
+      <td>BUY</td>
+      <td>0.9089</td>
+      <td>27.8911</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:00:00</td>
+      <td>2026-03-09 02:03:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.960</td>
+      <td>BUY</td>
+      <td>114.650</td>
+      <td>SELL</td>
+      <td>114.260</td>
+      <td>SELL</td>
+      <td>114.350</td>
+      <td>BUY</td>
+      <td>0.9218</td>
+      <td>27.8782</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 01:59:00</td>
+      <td>2026-03-09 02:06:00</td>
+      <td>LONG_SPREAD</td>
+      <td>114.670</td>
+      <td>BUY</td>
+      <td>114.890</td>
+      <td>SELL</td>
+      <td>114.970</td>
+      <td>SELL</td>
+      <td>114.590</td>
+      <td>BUY</td>
+      <td>0.9256</td>
+      <td>27.8744</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:08:00</td>
+      <td>2026-03-09 02:09:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.900</td>
+      <td>BUY</td>
+      <td>114.240</td>
+      <td>SELL</td>
+      <td>113.200</td>
+      <td>SELL</td>
+      <td>113.940</td>
+      <td>BUY</td>
+      <td>0.9158</td>
+      <td>27.8842</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:08:00</td>
+      <td>2026-03-09 02:16:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.900</td>
+      <td>BUY</td>
+      <td>114.240</td>
+      <td>SELL</td>
+      <td>113.200</td>
+      <td>SELL</td>
+      <td>113.940</td>
+      <td>BUY</td>
+      <td>0.9158</td>
+      <td>27.8842</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:18:00</td>
+      <td>2026-03-09 02:22:00</td>
+      <td>LONG_SPREAD</td>
+      <td>116.600</td>
+      <td>BUY</td>
+      <td>117.650</td>
+      <td>SELL</td>
+      <td>116.900</td>
+      <td>SELL</td>
+      <td>117.350</td>
+      <td>BUY</td>
+      <td>0.9445</td>
+      <td>27.8555</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:08:00</td>
+      <td>2026-03-09 02:27:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.900</td>
+      <td>BUY</td>
+      <td>114.240</td>
+      <td>SELL</td>
+      <td>113.200</td>
+      <td>SELL</td>
+      <td>113.940</td>
+      <td>BUY</td>
+      <td>0.9158</td>
+      <td>27.8842</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:28:00</td>
+      <td>2026-03-09 02:29:00</td>
+      <td>LONG_SPREAD</td>
+      <td>115.220</td>
+      <td>BUY</td>
+      <td>116.500</td>
+      <td>SELL</td>
+      <td>115.520</td>
+      <td>SELL</td>
+      <td>116.200</td>
+      <td>BUY</td>
+      <td>0.9343</td>
+      <td>27.8657</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:28:00</td>
+      <td>2026-03-09 02:40:00</td>
+      <td>LONG_SPREAD</td>
+      <td>115.220</td>
+      <td>BUY</td>
+      <td>116.500</td>
+      <td>SELL</td>
+      <td>115.520</td>
+      <td>SELL</td>
+      <td>116.200</td>
+      <td>BUY</td>
+      <td>0.9343</td>
+      <td>27.8657</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:28:00</td>
+      <td>2026-03-09 02:46:00</td>
+      <td>LONG_SPREAD</td>
+      <td>115.220</td>
+      <td>BUY</td>
+      <td>116.500</td>
+      <td>SELL</td>
+      <td>115.520</td>
+      <td>SELL</td>
+      <td>116.200</td>
+      <td>BUY</td>
+      <td>0.9343</td>
+      <td>27.8657</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:54:00</td>
+      <td>2026-03-09 02:58:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.720</td>
+      <td>BUY</td>
+      <td>114.380</td>
+      <td>SELL</td>
+      <td>114.020</td>
+      <td>SELL</td>
+      <td>114.080</td>
+      <td>BUY</td>
+      <td>0.9197</td>
+      <td>27.8803</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 03:00:00</td>
+      <td>2026-03-09 03:19:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.950</td>
+      <td>BUY</td>
+      <td>114.860</td>
+      <td>SELL</td>
+      <td>114.250</td>
+      <td>SELL</td>
+      <td>114.560</td>
+      <td>BUY</td>
+      <td>0.9226</td>
+      <td>27.8774</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 04:23:00</td>
+      <td>2026-04-02 09:48:00</td>
+      <td>LONG_SPREAD</td>
+      <td>115.330</td>
+      <td>BUY</td>
+      <td>116.620</td>
+      <td>SELL</td>
+      <td>115.630</td>
+      <td>SELL</td>
+      <td>116.320</td>
+      <td>BUY</td>
+      <td>0.9352</td>
+      <td>27.8648</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 03:38:00</td>
+      <td>2026-04-02 11:41:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.960</td>
+      <td>BUY</td>
+      <td>114.730</td>
+      <td>SELL</td>
+      <td>114.260</td>
+      <td>SELL</td>
+      <td>114.430</td>
+      <td>BUY</td>
+      <td>0.9221</td>
+      <td>27.8779</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 02:53:00</td>
+      <td>2026-04-02 11:55:00</td>
+      <td>LONG_SPREAD</td>
+      <td>114.370</td>
+      <td>BUY</td>
+      <td>114.420</td>
+      <td>SELL</td>
+      <td>114.670</td>
+      <td>SELL</td>
+      <td>114.120</td>
+      <td>BUY</td>
+      <td>0.9225</td>
+      <td>27.8775</td>
+    </tr>
+    <tr>
+      <td>2026-03-09 00:00:00</td>
+      <td>2026-04-02 12:33:00</td>
+      <td>LONG_SPREAD</td>
+      <td>107.340</td>
+      <td>BUY</td>
+      <td>107.200</td>
+      <td>SELL</td>
+      <td>107.640</td>
+      <td>SELL</td>
+      <td>106.900</td>
+      <td>BUY</td>
+      <td>0.8650</td>
+      <td>27.9350</td>
+    </tr>
+    <tr>
+      <td>2026-03-08 23:04:00</td>
+      <td>2026-04-02 12:36:00</td>
+      <td>LONG_SPREAD</td>
+      <td>103.300</td>
+      <td>BUY</td>
+      <td>103.420</td>
+      <td>SELL</td>
+      <td>103.600</td>
+      <td>SELL</td>
+      <td>103.120</td>
+      <td>BUY</td>
+      <td>0.8335</td>
+      <td>27.9665</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 12:58:00</td>
+      <td>2026-04-02 13:01:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>112.500</td>
+      <td>SELL</td>
+      <td>109.210</td>
+      <td>BUY</td>
+      <td>112.200</td>
+      <td>BUY</td>
+      <td>109.510</td>
+      <td>SELL</td>
+      <td>0.8939</td>
+      <td>27.9061</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 13:12:00</td>
+      <td>2026-04-02 13:31:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>112.930</td>
+      <td>SELL</td>
+      <td>109.570</td>
+      <td>BUY</td>
+      <td>112.630</td>
+      <td>BUY</td>
+      <td>109.870</td>
+      <td>SELL</td>
+      <td>0.8971</td>
+      <td>27.9029</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 13:43:00</td>
+      <td>2026-04-02 13:46:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>112.840</td>
+      <td>SELL</td>
+      <td>109.500</td>
+      <td>BUY</td>
+      <td>112.540</td>
+      <td>BUY</td>
+      <td>109.800</td>
+      <td>SELL</td>
+      <td>0.8965</td>
+      <td>27.9035</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 15:40:00</td>
+      <td>2026-04-02 16:32:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>110.770</td>
+      <td>SELL</td>
+      <td>107.520</td>
+      <td>BUY</td>
+      <td>110.470</td>
+      <td>BUY</td>
+      <td>107.820</td>
+      <td>SELL</td>
+      <td>0.8801</td>
+      <td>27.9199</td>
+    </tr>
+    <tr>
+      <td>2026-04-03 06:36:00</td>
+      <td>2026-04-03 08:32:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>112.030</td>
+      <td>SELL</td>
+      <td>108.230</td>
+      <td>BUY</td>
+      <td>111.730</td>
+      <td>BUY</td>
+      <td>108.530</td>
+      <td>SELL</td>
+      <td>0.8881</td>
+      <td>27.9119</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 21:30:00</td>
+      <td>2026-04-03 17:30:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>111.690</td>
+      <td>SELL</td>
+      <td>108.470</td>
+      <td>BUY</td>
+      <td>111.390</td>
+      <td>BUY</td>
+      <td>108.770</td>
+      <td>SELL</td>
+      <td>0.8877</td>
+      <td>27.9123</td>
+    </tr>
+    <tr>
+      <td>2026-04-02 12:46:00</td>
+      <td>2026-04-05 12:27:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>111.530</td>
+      <td>SELL</td>
+      <td>109.390</td>
+      <td>BUY</td>
+      <td>111.230</td>
+      <td>BUY</td>
+      <td>109.690</td>
+      <td>SELL</td>
+      <td>0.8907</td>
+      <td>27.9093</td>
+    </tr>
+    <tr>
+      <td>2026-04-04 23:56:00</td>
+      <td>2026-04-05 13:05:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.120</td>
+      <td>BUY</td>
+      <td>109.180</td>
+      <td>SELL</td>
+      <td>112.420</td>
+      <td>SELL</td>
+      <td>108.880</td>
+      <td>BUY</td>
+      <td>0.8923</td>
+      <td>27.9077</td>
+    </tr>
+    <tr>
+      <td>2026-04-05 13:31:00</td>
+      <td>2026-04-05 22:00:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.440</td>
+      <td>BUY</td>
+      <td>110.480</td>
+      <td>SELL</td>
+      <td>113.740</td>
+      <td>SELL</td>
+      <td>110.180</td>
+      <td>BUY</td>
+      <td>0.9028</td>
+      <td>27.8972</td>
+    </tr>
+    <tr>
+      <td>2026-04-05 22:01:00</td>
+      <td>2026-04-05 22:10:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.560</td>
+      <td>BUY</td>
+      <td>109.690</td>
+      <td>SELL</td>
+      <td>112.860</td>
+      <td>SELL</td>
+      <td>109.390</td>
+      <td>BUY</td>
+      <td>0.8961</td>
+      <td>27.9039</td>
+    </tr>
+    <tr>
+      <td>2026-04-05 22:55:00</td>
+      <td>2026-04-05 23:52:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.430</td>
+      <td>BUY</td>
+      <td>110.450</td>
+      <td>SELL</td>
+      <td>113.730</td>
+      <td>SELL</td>
+      <td>110.150</td>
+      <td>BUY</td>
+      <td>0.9027</td>
+      <td>27.8973</td>
+    </tr>
+    <tr>
+      <td>2026-04-05 12:34:00</td>
+      <td>2026-04-06 00:28:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>113.190</td>
+      <td>SELL</td>
+      <td>111.050</td>
+      <td>BUY</td>
+      <td>112.890</td>
+      <td>BUY</td>
+      <td>111.350</td>
+      <td>SELL</td>
+      <td>0.9041</td>
+      <td>27.8959</td>
+    </tr>
+    <tr>
+      <td>2026-04-06 09:31:00</td>
+      <td>2026-04-06 11:11:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>108.750</td>
+      <td>SELL</td>
+      <td>106.690</td>
+      <td>BUY</td>
+      <td>108.450</td>
+      <td>BUY</td>
+      <td>106.990</td>
+      <td>SELL</td>
+      <td>0.8687</td>
+      <td>27.9313</td>
+    </tr>
+    <tr>
+      <td>2026-04-06 00:01:00</td>
+      <td>2026-04-06 13:38:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.220</td>
+      <td>BUY</td>
+      <td>110.330</td>
+      <td>SELL</td>
+      <td>113.520</td>
+      <td>SELL</td>
+      <td>110.030</td>
+      <td>BUY</td>
+      <td>0.9014</td>
+      <td>27.8986</td>
+    </tr>
+    <tr>
+      <td>2026-04-06 13:52:00</td>
+      <td>2026-04-06 23:51:00</td>
+      <td>LONG_SPREAD</td>
+      <td>111.700</td>
+      <td>BUY</td>
+      <td>108.770</td>
+      <td>SELL</td>
+      <td>112.000</td>
+      <td>SELL</td>
+      <td>108.470</td>
+      <td>BUY</td>
+      <td>0.8889</td>
+      <td>27.9111</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 00:18:00</td>
+      <td>2026-04-07 01:24:00</td>
+      <td>LONG_SPREAD</td>
+      <td>112.480</td>
+      <td>BUY</td>
+      <td>109.520</td>
+      <td>SELL</td>
+      <td>112.780</td>
+      <td>SELL</td>
+      <td>109.220</td>
+      <td>BUY</td>
+      <td>0.8951</td>
+      <td>27.9049</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 04:09:00</td>
+      <td>2026-04-07 05:39:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>115.410</td>
+      <td>SELL</td>
+      <td>111.560</td>
+      <td>BUY</td>
+      <td>115.110</td>
+      <td>BUY</td>
+      <td>111.860</td>
+      <td>SELL</td>
+      <td>0.9151</td>
+      <td>27.8849</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 08:04:00</td>
+      <td>2026-04-07 09:20:00</td>
+      <td>LONG_SPREAD</td>
+      <td>114.170</td>
+      <td>BUY</td>
+      <td>111.210</td>
+      <td>SELL</td>
+      <td>114.470</td>
+      <td>SELL</td>
+      <td>110.910</td>
+      <td>BUY</td>
+      <td>0.9087</td>
+      <td>27.8913</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 10:26:00</td>
+      <td>2026-04-07 10:33:00</td>
+      <td>LONG_SPREAD</td>
+      <td>113.350</td>
+      <td>BUY</td>
+      <td>110.380</td>
+      <td>SELL</td>
+      <td>113.650</td>
+      <td>SELL</td>
+      <td>110.080</td>
+      <td>BUY</td>
+      <td>0.9021</td>
+      <td>27.8979</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 14:12:00</td>
+      <td>2026-04-07 17:15:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>115.770</td>
+      <td>SELL</td>
+      <td>110.680</td>
+      <td>BUY</td>
+      <td>115.470</td>
+      <td>BUY</td>
+      <td>110.980</td>
+      <td>SELL</td>
+      <td>0.9130</td>
+      <td>27.8870</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 13:25:00</td>
+      <td>2026-04-07 17:49:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>114.340</td>
+      <td>SELL</td>
+      <td>109.840</td>
+      <td>BUY</td>
+      <td>114.040</td>
+      <td>BUY</td>
+      <td>110.140</td>
+      <td>SELL</td>
+      <td>0.9039</td>
+      <td>27.8961</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 12:02:00</td>
+      <td>2026-04-07 18:24:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>114.890</td>
+      <td>SELL</td>
+      <td>111.040</td>
+      <td>BUY</td>
+      <td>114.590</td>
+      <td>BUY</td>
+      <td>111.340</td>
+      <td>SELL</td>
+      <td>0.9109</td>
+      <td>27.8891</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 18:55:00</td>
+      <td>2026-04-07 19:22:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>114.850</td>
+      <td>SELL</td>
+      <td>109.810</td>
+      <td>BUY</td>
+      <td>114.550</td>
+      <td>BUY</td>
+      <td>110.110</td>
+      <td>SELL</td>
+      <td>0.9058</td>
+      <td>27.8942</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 21:08:00</td>
+      <td>2026-04-07 22:00:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>107.000</td>
+      <td>SELL</td>
+      <td>101.860</td>
+      <td>BUY</td>
+      <td>106.700</td>
+      <td>BUY</td>
+      <td>102.160</td>
+      <td>SELL</td>
+      <td>0.8421</td>
+      <td>27.9579</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 22:22:00</td>
+      <td>2026-04-07 22:25:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>108.020</td>
+      <td>SELL</td>
+      <td>102.940</td>
+      <td>BUY</td>
+      <td>107.720</td>
+      <td>BUY</td>
+      <td>103.240</td>
+      <td>SELL</td>
+      <td>0.8506</td>
+      <td>27.9494</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 18:42:00</td>
+      <td>2026-04-07 22:32:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>113.570</td>
+      <td>SELL</td>
+      <td>109.070</td>
+      <td>BUY</td>
+      <td>113.270</td>
+      <td>BUY</td>
+      <td>109.370</td>
+      <td>SELL</td>
+      <td>0.8977</td>
+      <td>27.9023</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 18:30:00</td>
+      <td>2026-04-07 22:33:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>112.780</td>
+      <td>SELL</td>
+      <td>108.950</td>
+      <td>BUY</td>
+      <td>112.480</td>
+      <td>BUY</td>
+      <td>109.250</td>
+      <td>SELL</td>
+      <td>0.8940</td>
+      <td>27.9060</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 22:35:00</td>
+      <td>2026-04-07 22:49:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>102.450</td>
+      <td>SELL</td>
+      <td>97.910</td>
+      <td>BUY</td>
+      <td>102.150</td>
+      <td>BUY</td>
+      <td>98.210</td>
+      <td>SELL</td>
+      <td>0.8079</td>
+      <td>27.9921</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 22:35:00</td>
+      <td>2026-04-07 23:12:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>102.450</td>
+      <td>SELL</td>
+      <td>97.910</td>
+      <td>BUY</td>
+      <td>102.150</td>
+      <td>BUY</td>
+      <td>98.210</td>
+      <td>SELL</td>
+      <td>0.8079</td>
+      <td>27.9921</td>
+    </tr>
+    <tr>
+      <td>2026-04-06 13:07:00</td>
+      <td>2026-04-07 23:22:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>110.650</td>
+      <td>SELL</td>
+      <td>108.610</td>
+      <td>BUY</td>
+      <td>110.350</td>
+      <td>BUY</td>
+      <td>108.910</td>
+      <td>SELL</td>
+      <td>0.8841</td>
+      <td>27.9159</td>
+    </tr>
+    <tr>
+      <td>2026-04-07 23:46:00</td>
+      <td>2026-04-07 23:54:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>95.620</td>
+      <td>SELL</td>
+      <td>93.620</td>
+      <td>BUY</td>
+      <td>95.320</td>
+      <td>BUY</td>
+      <td>93.920</td>
+      <td>SELL</td>
+      <td>0.7630</td>
+      <td>28.0370</td>
+    </tr>
+    <tr>
+      <td>2026-04-08 00:00:00</td>
+      <td>2026-04-08 02:11:00</td>
+      <td>SHORT_SPREAD</td>
+      <td>95.250</td>
+      <td>SELL</td>
+      <td>93.110</td>
+      <td>BUY</td>
+      <td>94.950</td>
+      <td>BUY</td>
+      <td>93.410</td>
+      <td>SELL</td>
+      <td>0.7595</td>
+      <td>28.0405</td>
+    </tr>
+    <tr>
+      <td>2026-04-08 09:52:00</td>
+      <td>2026-04-08 12:19:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.290</td>
+      <td>BUY</td>
+      <td>93.720</td>
+      <td>SELL</td>
+      <td>94.590</td>
+      <td>SELL</td>
+      <td>93.420</td>
+      <td>BUY</td>
+      <td>0.7581</td>
+      <td>28.0419</td>
+    </tr>
+    <tr>
+      <td>2026-04-08 16:34:00</td>
+      <td>2026-04-09 01:32:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.240</td>
+      <td>BUY</td>
+      <td>94.250</td>
+      <td>SELL</td>
+      <td>94.540</td>
+      <td>SELL</td>
+      <td>93.950</td>
+      <td>BUY</td>
+      <td>0.7600</td>
+      <td>28.0400</td>
+    </tr>
+    <tr>
+      <td>2026-04-09 07:47:00</td>
+      <td>2026-04-09 09:12:00</td>
+      <td>LONG_SPREAD</td>
+      <td>96.410</td>
+      <td>BUY</td>
+      <td>97.070</td>
+      <td>SELL</td>
+      <td>96.710</td>
+      <td>SELL</td>
+      <td>96.770</td>
+      <td>BUY</td>
+      <td>0.7801</td>
+      <td>28.0199</td>
+    </tr>
+    <tr>
+      <td>2026-04-09 02:17:00</td>
+      <td>2026-04-09 10:14:00</td>
+      <td>LONG_SPREAD</td>
+      <td>95.550</td>
+      <td>BUY</td>
+      <td>95.550</td>
+      <td>SELL</td>
+      <td>95.850</td>
+      <td>SELL</td>
+      <td>95.250</td>
+      <td>BUY</td>
+      <td>0.7705</td>
+      <td>28.0295</td>
+    </tr>
+    <tr>
+      <td>2026-04-08 15:39:00</td>
+      <td>2026-04-09 12:25:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.610</td>
+      <td>BUY</td>
+      <td>94.060</td>
+      <td>SELL</td>
+      <td>94.910</td>
+      <td>SELL</td>
+      <td>93.760</td>
+      <td>BUY</td>
+      <td>0.7607</td>
+      <td>28.0393</td>
+    </tr>
+    <tr>
+      <td>2026-04-09 15:33:00</td>
+      <td>2026-04-09 16:01:00</td>
+      <td>LONG_SPREAD</td>
+      <td>96.480</td>
+      <td>BUY</td>
+      <td>95.900</td>
+      <td>SELL</td>
+      <td>96.780</td>
+      <td>SELL</td>
+      <td>95.600</td>
+      <td>BUY</td>
+      <td>0.7757</td>
+      <td>28.0243</td>
+    </tr>
+    <tr>
+      <td>2026-04-09 17:14:00</td>
+      <td>2026-04-09 17:18:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.360</td>
+      <td>BUY</td>
+      <td>93.780</td>
+      <td>SELL</td>
+      <td>94.660</td>
+      <td>SELL</td>
+      <td>93.480</td>
+      <td>BUY</td>
+      <td>0.7586</td>
+      <td>28.0414</td>
+    </tr>
+    <tr>
+      <td>2026-04-09 17:44:00</td>
+      <td>2026-04-09 18:22:00</td>
+      <td>LONG_SPREAD</td>
+      <td>93.630</td>
+      <td>BUY</td>
+      <td>93.050</td>
+      <td>SELL</td>
+      <td>93.930</td>
+      <td>SELL</td>
+      <td>92.750</td>
+      <td>BUY</td>
+      <td>0.7527</td>
+      <td>28.0473</td>
+    </tr>
+    <tr>
+      <td>2026-04-10 03:45:00</td>
+      <td>2026-04-10 10:30:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.340</td>
+      <td>BUY</td>
+      <td>93.880</td>
+      <td>SELL</td>
+      <td>94.640</td>
+      <td>SELL</td>
+      <td>93.580</td>
+      <td>BUY</td>
+      <td>0.7589</td>
+      <td>28.0411</td>
+    </tr>
+    <tr>
+      <td>2026-04-10 16:58:00</td>
+      <td>2026-04-10 18:40:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.480</td>
+      <td>BUY</td>
+      <td>93.920</td>
+      <td>SELL</td>
+      <td>94.780</td>
+      <td>SELL</td>
+      <td>93.620</td>
+      <td>BUY</td>
+      <td>0.7596</td>
+      <td>28.0404</td>
+    </tr>
+    <tr>
+      <td>2026-04-11 16:46:00</td>
+      <td>2026-04-11 16:49:00</td>
+      <td>LONG_SPREAD</td>
+      <td>89.730</td>
+      <td>BUY</td>
+      <td>90.670</td>
+      <td>SELL</td>
+      <td>90.030</td>
+      <td>SELL</td>
+      <td>90.370</td>
+      <td>BUY</td>
+      <td>0.7274</td>
+      <td>28.0726</td>
+    </tr>
+    <tr>
+      <td>2026-04-11 16:46:00</td>
+      <td>2026-04-11 16:50:00</td>
+      <td>LONG_SPREAD</td>
+      <td>89.730</td>
+      <td>BUY</td>
+      <td>90.670</td>
+      <td>SELL</td>
+      <td>90.030</td>
+      <td>SELL</td>
+      <td>90.370</td>
+      <td>BUY</td>
+      <td>0.7274</td>
+      <td>28.0726</td>
+    </tr>
+    <tr>
+      <td>2026-04-10 19:03:00</td>
+      <td>2026-04-11 16:50:00</td>
+      <td>LONG_SPREAD</td>
+      <td>92.580</td>
+      <td>BUY</td>
+      <td>91.980</td>
+      <td>SELL</td>
+      <td>92.880</td>
+      <td>SELL</td>
+      <td>91.680</td>
+      <td>BUY</td>
+      <td>0.7441</td>
+      <td>28.0559</td>
+    </tr>
+    <tr>
+      <td>2026-04-11 16:54:00</td>
+      <td>2026-04-11 17:06:00</td>
+      <td>LONG_SPREAD</td>
+      <td>90.390</td>
+      <td>BUY</td>
+      <td>90.610</td>
+      <td>SELL</td>
+      <td>90.690</td>
+      <td>SELL</td>
+      <td>90.310</td>
+      <td>BUY</td>
+      <td>0.7298</td>
+      <td>28.0702</td>
+    </tr>
+    <tr>
+      <td>2026-04-11 18:18:00</td>
+      <td>2026-04-11 19:47:00</td>
+      <td>LONG_SPREAD</td>
+      <td>89.620</td>
+      <td>BUY</td>
+      <td>89.740</td>
+      <td>SELL</td>
+      <td>89.920</td>
+      <td>SELL</td>
+      <td>89.440</td>
+      <td>BUY</td>
+      <td>0.7232</td>
+      <td>28.0768</td>
+    </tr>
+    <tr>
+      <td>2026-04-11 16:52:00</td>
+      <td>2026-04-12 01:33:00</td>
+      <td>LONG_SPREAD</td>
+      <td>89.980</td>
+      <td>BUY</td>
+      <td>89.440</td>
+      <td>SELL</td>
+      <td>90.280</td>
+      <td>SELL</td>
+      <td>89.140</td>
+      <td>BUY</td>
+      <td>0.7234</td>
+      <td>28.0766</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 01:40:00</td>
+      <td>2026-04-12 01:43:00</td>
+      <td>LONG_SPREAD</td>
+      <td>93.030</td>
+      <td>BUY</td>
+      <td>92.920</td>
+      <td>SELL</td>
+      <td>93.330</td>
+      <td>SELL</td>
+      <td>92.620</td>
+      <td>BUY</td>
+      <td>0.7498</td>
+      <td>28.0502</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 02:20:00</td>
+      <td>2026-04-12 02:29:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.190</td>
+      <td>BUY</td>
+      <td>94.890</td>
+      <td>SELL</td>
+      <td>94.490</td>
+      <td>SELL</td>
+      <td>94.590</td>
+      <td>BUY</td>
+      <td>0.7624</td>
+      <td>28.0376</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 02:12:00</td>
+      <td>2026-04-12 03:32:00</td>
+      <td>LONG_SPREAD</td>
+      <td>93.810</td>
+      <td>BUY</td>
+      <td>93.920</td>
+      <td>SELL</td>
+      <td>94.110</td>
+      <td>SELL</td>
+      <td>93.620</td>
+      <td>BUY</td>
+      <td>0.7569</td>
+      <td>28.0431</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 02:03:00</td>
+      <td>2026-04-12 13:01:00</td>
+      <td>LONG_SPREAD</td>
+      <td>94.320</td>
+      <td>BUY</td>
+      <td>93.730</td>
+      <td>SELL</td>
+      <td>94.620</td>
+      <td>SELL</td>
+      <td>93.430</td>
+      <td>BUY</td>
+      <td>0.7582</td>
+      <td>28.0418</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 15:57:00</td>
+      <td>2026-04-12 16:06:00</td>
+      <td>LONG_SPREAD</td>
+      <td>95.640</td>
+      <td>BUY</td>
+      <td>96.300</td>
+      <td>SELL</td>
+      <td>95.940</td>
+      <td>SELL</td>
+      <td>96.000</td>
+      <td>BUY</td>
+      <td>0.7739</td>
+      <td>28.0261</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 20:13:00</td>
+      <td>2026-04-12 20:24:00</td>
+      <td>LONG_SPREAD</td>
+      <td>97.900</td>
+      <td>BUY</td>
+      <td>99.150</td>
+      <td>SELL</td>
+      <td>98.200</td>
+      <td>SELL</td>
+      <td>98.850</td>
+      <td>BUY</td>
+      <td>0.7945</td>
+      <td>28.0055</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 21:01:00</td>
+      <td>2026-04-12 22:03:00</td>
+      <td>LONG_SPREAD</td>
+      <td>98.280</td>
+      <td>BUY</td>
+      <td>99.640</td>
+      <td>SELL</td>
+      <td>98.580</td>
+      <td>SELL</td>
+      <td>99.340</td>
+      <td>BUY</td>
+      <td>0.7980</td>
+      <td>28.0020</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 19:47:00</td>
+      <td>2026-04-12 22:03:00</td>
+      <td>LONG_SPREAD</td>
+      <td>97.080</td>
+      <td>BUY</td>
+      <td>97.760</td>
+      <td>SELL</td>
+      <td>97.380</td>
+      <td>SELL</td>
+      <td>97.460</td>
+      <td>BUY</td>
+      <td>0.7856</td>
+      <td>28.0144</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 14:40:00</td>
+      <td>2026-04-12 22:07:00</td>
+      <td>LONG_SPREAD</td>
+      <td>96.190</td>
+      <td>BUY</td>
+      <td>96.190</td>
+      <td>SELL</td>
+      <td>96.490</td>
+      <td>SELL</td>
+      <td>95.890</td>
+      <td>BUY</td>
+      <td>0.7757</td>
+      <td>28.0243</td>
+    </tr>
+    <tr>
+      <td>2026-04-12 13:10:00</td>
+      <td>2026-04-12 23:25:00</td>
+      <td>LONG_SPREAD</td>
+      <td>96.240</td>
+      <td>BUY</td>
+      <td>95.810</td>
+      <td>SELL</td>
+      <td>96.540</td>
+      <td>SELL</td>
+      <td>95.510</td>
+      <td>BUY</td>
+      <td>0.7743</td>
+      <td>28.0257</td>
+    </tr>
+    <tr>
+      <td>2026-04-13 00:18:00</td>
+      <td>2026-04-13 01:08:00</td>
+      <td>LONG_SPREAD</td>
+      <td>98.650</td>
+      <td>BUY</td>
+      <td>98.160</td>
+      <td>SELL</td>
+      <td>98.950</td>
+      <td>SELL</td>
+      <td>97.860</td>
+      <td>BUY</td>
+      <td>0.7935</td>
+      <td>28.0065</td>
+    </tr>
+    <tr>
+      <td>2026-04-13 17:03:00</td>
+      <td>2026-04-13 17:10:00</td>
+      <td>LONG_SPREAD</td>
+      <td>93.950</td>
+      <td>BUY</td>
+      <td>95.170</td>
+      <td>SELL</td>
+      <td>94.250</td>
+      <td>SELL</td>
+      <td>94.870</td>
+      <td>BUY</td>
+      <td>0.7625</td>
+      <td>28.0375</td>
+    </tr>
+    <tr>
+      <td>2026-04-13 16:34:00</td>
+      <td>2026-04-13 20:00:00</td>
+      <td>LONG_SPREAD</td>
+      <td>95.080</td>
+      <td>BUY</td>
+      <td>95.710</td>
+      <td>SELL</td>
+      <td>95.380</td>
+      <td>SELL</td>
+      <td>95.410</td>
+      <td>BUY</td>
+      <td>0.7693</td>
+      <td>28.0307</td>
+    </tr>
+  </tbody>
+</table>
+      </div>
+    </div>
+    <div class="section"><h2>熔断明细</h2><p class="muted">未启用熔断机制</p></div>
+  </div>
+</body>
+</html>
